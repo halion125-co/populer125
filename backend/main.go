@@ -5,9 +5,12 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	echomiddleware "github.com/labstack/echo/v4/middleware"
+	"github.com/rocketgrowth/backend/internal/auth"
 	"github.com/rocketgrowth/backend/internal/config"
 	"github.com/rocketgrowth/backend/internal/coupang"
+	"github.com/rocketgrowth/backend/internal/handlers"
+	"github.com/rocketgrowth/backend/internal/middleware"
 )
 
 var (
@@ -20,19 +23,24 @@ func main() {
 	cfg = config.Load()
 
 	// Initialize Coupang API client
-	coupangClient = coupang.NewClient(cfg.CoupangAccessKey, cfg.CoupangSecretKey)
+	coupangClient = coupang.NewClient(cfg.CoupangVendorID, cfg.CoupangAccessKey, cfg.CoupangSecretKey)
 
 	e := echo.New()
 
 	// Middleware
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
-	e.Use(middleware.CORS())
+	e.Use(echomiddleware.Logger())
+	e.Use(echomiddleware.Recover())
+	e.Use(echomiddleware.CORS())
 
-	// Routes
+	// Public routes (no authentication required)
+	e.POST("/api/auth/login", handlers.Login(cfg))
 	e.GET("/api/health", healthCheck)
-	e.GET("/api/coupang/products", getProducts)
-	e.GET("/api/coupang/test", testCoupangAPI)
+
+	// Protected routes (JWT authentication required)
+	api := e.Group("/api")
+	api.Use(middleware.JWTAuthMiddleware(cfg))
+	api.GET("/coupang/products", getProductsProtected)
+	api.GET("/coupang/test", testCoupangAPI)
 
 	// Start server
 	port := fmt.Sprintf(":%s", cfg.ServerPort)
@@ -63,8 +71,12 @@ func testCoupangAPI(c echo.Context) error {
 	})
 }
 
-func getProducts(c echo.Context) error {
-	data, err := coupangClient.GetProducts()
+func getProductsProtected(c echo.Context) error {
+	// Extract credentials from JWT claims
+	claims := c.Get("user_claims").(*auth.Claims)
+	client := coupang.NewClient(claims.VendorID, claims.AccessKey, claims.SecretKey)
+
+	data, err := client.GetProducts()
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": err.Error(),

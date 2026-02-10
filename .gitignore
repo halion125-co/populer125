@@ -1,16 +1,51 @@
+# Environment
+.env
+.env.local
+
+# Database
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Backups
+backups/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+
+# Backend
+backend/tmp/
+backend/*.db
+backend/main
+backend/rocketgrowth
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
 # OS
 .DS_Store
-
-# Node
-node_modules/
-dist/
-.vite/
-
-# Python
-__pycache__/
-*.pyc
-.venv/
-.env
+Thumbs.db
 
 # Logs
 *.log
+logs/
+
+# Docker
+.dockerignore

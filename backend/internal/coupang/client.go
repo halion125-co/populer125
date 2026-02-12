@@ -4,11 +4,20 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
+
+type productsPage struct {
+	Code      string            `json:"code"`
+	Message   string            `json:"message"`
+	NextToken string            `json:"nextToken"`
+	Data      []json.RawMessage `json:"data"`
+}
 
 type Client struct {
 	VendorID  string
@@ -79,14 +88,129 @@ func (c *Client) Request(method, path, query string) ([]byte, error) {
 	return body, nil
 }
 
-// GetProducts fetches product list
+// GetProducts fetches all products by following nextToken pagination
 func (c *Client) GetProducts() ([]byte, error) {
-	query := fmt.Sprintf("vendorId=%s", c.VendorID)
-	return c.Request("GET", "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products", query)
+	path := "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products"
+	baseQuery := fmt.Sprintf("vendorId=%s&businessTypes=rocketGrowth", c.VendorID)
+
+	var allProducts []json.RawMessage
+
+	nextToken := ""
+	for {
+		query := baseQuery
+		if nextToken != "" {
+			query += "&nextToken=" + nextToken
+		}
+
+		body, err := c.Request("GET", path, query)
+		if err != nil {
+			return nil, err
+		}
+
+		var page productsPage
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, fmt.Errorf("failed to parse products response: %w", err)
+		}
+
+		allProducts = append(allProducts, page.Data...)
+
+		if page.NextToken == "" {
+			break
+		}
+		nextToken = page.NextToken
+	}
+
+	// Build combined response
+	result := map[string]interface{}{
+		"code":    "SUCCESS",
+		"message": "",
+		"data":    allProducts,
+	}
+	return json.Marshal(result)
 }
 
-// GetOrders fetches order list
-func (c *Client) GetOrders(createdAtFrom, createdAtTo string) ([]byte, error) {
-	query := fmt.Sprintf("createdAtFrom=%s&createdAtTo=%s", createdAtFrom, createdAtTo)
-	return c.Request("GET", "/v2/providers/openapi/apis/api/v4/vendors/openapi/orders", query)
+// ordersPage represents a paginated response from Orders API
+type ordersPage struct {
+	Code      interface{}       `json:"code"` // Can be string or number depending on API
+	Message   string            `json:"message"`
+	NextToken string            `json:"nextToken"`
+	Data      []json.RawMessage `json:"data"`
+}
+
+// GetOrders fetches all orders by splitting date range into 30-day chunks (API limit)
+func (c *Client) GetOrders(paidDateFrom, paidDateTo string) ([]byte, error) {
+	// Parse date strings
+	fromDate, err := time.Parse("2006-01-02", paidDateFrom)
+	if err != nil {
+		return nil, fmt.Errorf("invalid paidDateFrom format: %w", err)
+	}
+	toDate, err := time.Parse("2006-01-02", paidDateTo)
+	if err != nil {
+		return nil, fmt.Errorf("invalid paidDateTo format: %w", err)
+	}
+
+	// Coupang API treats "to" date as exclusive, so add 1 day to include it
+	toDate = toDate.AddDate(0, 0, 1)
+
+	var allOrders []json.RawMessage
+	path := fmt.Sprintf("/v2/providers/rg_open_api/apis/api/v1/vendors/%s/rg/orders", c.VendorID)
+
+	// Split into 30-day chunks (API limit: 1 month)
+	currentFrom := fromDate
+	for currentFrom.Before(toDate) || currentFrom.Equal(toDate) {
+		// Calculate chunk end (30 days from current start, but not exceeding toDate)
+		currentTo := currentFrom.AddDate(0, 0, 30)
+		if currentTo.After(toDate) {
+			currentTo = toDate
+		}
+
+		// Convert to yyyymmdd format
+		fromStr := strings.ReplaceAll(currentFrom.Format("2006-01-02"), "-", "")
+		toStr := strings.ReplaceAll(currentTo.Format("2006-01-02"), "-", "")
+
+		// Fetch orders for this chunk with pagination
+		baseQuery := fmt.Sprintf("paidDateFrom=%s&paidDateTo=%s", fromStr, toStr)
+		nextToken := ""
+		for {
+			query := baseQuery
+			if nextToken != "" {
+				query += "&nextToken=" + nextToken
+			}
+
+			body, err := c.Request("GET", path, query)
+			if err != nil {
+				return nil, err
+			}
+
+			var page ordersPage
+			if err := json.Unmarshal(body, &page); err != nil {
+				return nil, fmt.Errorf("failed to parse orders response: %w", err)
+			}
+
+			allOrders = append(allOrders, page.Data...)
+
+			// If no nextToken, we've fetched all pages for this chunk
+			if page.NextToken == "" {
+				break
+			}
+			nextToken = page.NextToken
+		}
+
+		// Move to next chunk
+		currentFrom = currentTo.AddDate(0, 0, 1)
+	}
+
+	// Build combined response
+	result := map[string]interface{}{
+		"code":    "SUCCESS",
+		"message": "",
+		"data":    allOrders,
+	}
+	return json.Marshal(result)
+}
+
+// GetInventory fetches inventory for a specific vendorItemId
+func (c *Client) GetInventory(vendorItemId string) ([]byte, error) {
+	path := fmt.Sprintf("/v2/providers/openapi/apis/api/v4/vendors/%s/inventories/%s", c.VendorID, vendorItemId)
+	return c.Request("GET", path, "")
 }

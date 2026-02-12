@@ -61,17 +61,26 @@ const DashboardPage = () => {
           <h3 className="text-xl font-bold text-gray-800 mb-4">메인 메뉴</h3>
           <ul className="space-y-2">
             <li>
-              <button className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-md">
+              <button
+                onClick={() => navigate({ to: '/products' })}
+                className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-md cursor-pointer"
+              >
                 📦 상품 관리
               </button>
             </li>
             <li>
-              <button className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-md">
+              <button
+                onClick={() => navigate({ to: '/orders' })}
+                className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-md cursor-pointer"
+              >
                 📋 주문 관리
               </button>
             </li>
             <li>
-              <button className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-md">
+              <button
+                onClick={() => navigate({ to: '/inventory' })}
+                className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-md cursor-pointer"
+              >
                 📊 재고 관리
               </button>
             </li>

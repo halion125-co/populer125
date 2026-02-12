@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, type ReactNode } from 'react';
 import { apiClient } from '../lib/api';
 import type { User, LoginCredentials, LoginResponse, AuthContextType } from '../types/auth';
 
@@ -31,7 +31,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const { token, vendor_id } = response.data;
 
     localStorage.setItem('auth_token', token);
-    const userData = { vendorId: vendor_id, ...credentials };
+    const userData = { ...credentials, vendorId: vendor_id };
     localStorage.setItem('user', JSON.stringify(userData));
 
     setToken(token);

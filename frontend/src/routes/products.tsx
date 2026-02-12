@@ -1,8 +1,8 @@
 import { createFileRoute, redirect } from '@tanstack/react-router';
-import DashboardPage from '../pages/DashboardPage';
+import ProductsPage from '../pages/ProductsPage';
 
-export const Route = createFileRoute('/')({
-  component: DashboardPage,
+export const Route = createFileRoute('/products')({
+  component: ProductsPage,
   beforeLoad: () => {
     const isAuthenticated = !!localStorage.getItem('auth_token');
     if (!isAuthenticated) {

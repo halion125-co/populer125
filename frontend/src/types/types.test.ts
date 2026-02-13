@@ -49,17 +49,15 @@ describe('Type Definitions', () => {
       sellerProductName: 'Test Product',
       vendorItemId: 123,
       vendorItemName: 'Test Option',
+      quantity: 100,
+      stockAvailableQuantity: 95,
+      warehouseQuantity: 100,
       salePrice: 10000,
       originalPrice: 8000,
       statusName: '판매중',
-      inventory: {
-        quantity: 100,
-        stockAvailableQuantity: 95,
-        warehouseQuantity: 100,
-      },
     };
 
     expect(item.vendorItemId).toBe(123);
-    expect(item.inventory?.stockAvailableQuantity).toBe(95);
+    expect(item.stockAvailableQuantity).toBe(95);
   });
 });

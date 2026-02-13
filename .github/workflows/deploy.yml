@@ -1,0 +1,62 @@
+name: Deploy to NAS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # 수동 실행 가능
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.NAS_SSH_PRIVATE_KEY }}
+
+      - name: Add NAS to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.NAS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to NAS
+        env:
+          NAS_HOST: ${{ secrets.NAS_HOST }}
+          NAS_USER: ${{ secrets.NAS_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          echo "🚀 Deploying to NAS..."
+
+          # 파일 동기화
+          rsync -avz --progress \
+            --exclude 'node_modules' \
+            --exclude '.git' \
+            --exclude 'data/*.db' \
+            --exclude 'bin' \
+            --exclude 'frontend/dist' \
+            --exclude 'backend/server' \
+            ./ ${NAS_USER}@${NAS_HOST}:${DEPLOY_PATH}/
+
+          # NAS에서 Docker Compose 실행
+          ssh ${NAS_USER}@${NAS_HOST} << 'ENDSSH'
+            cd ${DEPLOY_PATH}
+            docker-compose -f docker-compose.prod.yml down
+            docker-compose -f docker-compose.prod.yml build --no-cache
+            docker-compose -f docker-compose.prod.yml up -d
+            docker-compose -f docker-compose.prod.yml ps
+          ENDSSH
+
+      - name: Health Check
+        run: |
+          echo "⏳ Waiting for services to start..."
+          sleep 10
+
+          echo "🔍 Checking backend health..."
+          curl -f http://${{ secrets.NAS_HOST }}:8000/api/health || exit 1
+
+          echo "✅ Deployment successful!"

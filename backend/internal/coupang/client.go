@@ -214,3 +214,9 @@ func (c *Client) GetInventory(vendorItemId string) ([]byte, error) {
 	path := fmt.Sprintf("/v2/providers/openapi/apis/api/v4/vendors/%s/inventories/%s", c.VendorID, vendorItemId)
 	return c.Request("GET", path, "")
 }
+
+// GetInventorySummaries fetches ALL inventory summaries from Rocket Warehouse
+func (c *Client) GetInventorySummaries() ([]byte, error) {
+	path := fmt.Sprintf("/v2/providers/rg_open_api/apis/api/v1/vendors/%s/rg/inventory/summaries", c.VendorID)
+	return c.Request("GET", path, "")
+}

@@ -1,0 +1,20 @@
+FROM golang:1.22-alpine AS build
+WORKDIR /app
+
+# (필요 시) gcc 등 추가 - sqlite/cgo 쓰면 필요할 수 있음
+RUN apk add --no-cache gcc musl-dev
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o server .
+
+FROM alpine:3.20
+WORKDIR /app
+# sqlite/cgo 런타임 의존성 대비
+RUN apk add --no-cache ca-certificates tzdata
+
+COPY --from=build /app/server /app/server
+EXPOSE 8000
+CMD ["/app/server"]

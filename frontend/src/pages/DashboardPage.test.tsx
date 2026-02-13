@@ -12,9 +12,11 @@ vi.mock('@tanstack/react-router', () => ({
 describe('DashboardPage', () => {
   const mockAuthContext = {
     user: { vendorId: 'A01407257', accessKey: 'test', secretKey: 'test' },
+    token: 'mock-token',
     login: vi.fn(),
     logout: vi.fn(),
     isAuthenticated: true,
+    isLoading: false,
   };
 
   it('TC001: renders dashboard title', () => {

@@ -85,7 +85,7 @@ const InventoryPage = () => {
         return false;
       }
       if (filters.stockStatus !== 'all') {
-        const stockQty = item.inventory?.stockAvailableQuantity || 0;
+        const stockQty = item.stockAvailableQuantity || 0;
         if (filters.stockStatus === 'in_stock' && stockQty <= 0) return false;
         if (filters.stockStatus === 'out_of_stock' && stockQty > 0) return false;
       }
@@ -99,7 +99,7 @@ const InventoryPage = () => {
   const totalItems = inventoryItems?.length || 0;
   const inStockCount = useMemo(() => {
     if (!inventoryItems) return 0;
-    return inventoryItems.filter(item => (item.inventory?.stockAvailableQuantity || 0) > 0).length;
+    return inventoryItems.filter(item => (item.stockAvailableQuantity || 0) > 0).length;
   }, [inventoryItems]);
   const outOfStockCount = totalItems - inStockCount;
 
@@ -258,14 +258,11 @@ const InventoryPage = () => {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">상품명</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">옵션명</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">옵션</th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">재고수량</th>
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">판매량(7일)</th>
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">판매량(30일)</th>
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">재고상태</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">판매가능</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">판매가</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">비용</th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">상태</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -319,50 +316,40 @@ function InventoryItemRow({
   item: InventoryItem;
   sales?: { sales7d: number; sales30d: number }
 }) {
-  const formatPrice = (price: number | undefined) => {
-    if (price === undefined || price === null) return '-';
-    return price.toLocaleString('ko-KR') + '원';
-  };
-
-  const stockQty = item.inventory?.stockAvailableQuantity || 0;
+  const stockQty = item.stockAvailableQuantity || 0;
   const isInStock = stockQty > 0;
 
   return (
     <tr className="hover:bg-gray-50">
+      {/* 상품명 */}
       <td className="px-4 py-3 text-sm text-gray-900">
-        <div className="max-w-xs truncate">{item.sellerProductName}</div>
+        <div className="max-w-xs truncate">{item.sellerProductName || '-'}</div>
       </td>
+      {/* 옵션 */}
       <td className="px-4 py-3 text-sm text-gray-700">
-        <div className="max-w-xs truncate">{item.vendorItemName}</div>
+        <div className="max-w-xs truncate">{item.vendorItemName || '-'}</div>
       </td>
+      {/* 재고수량 */}
+      <td className="px-4 py-3 text-sm text-gray-900 text-center font-medium">
+        {stockQty.toLocaleString()}
+      </td>
+      {/* 판매량(7일) */}
       <td className="px-4 py-3 text-sm text-gray-600 text-center">
         {sales?.sales7d || 0}
       </td>
+      {/* 판매량(30일) */}
       <td className="px-4 py-3 text-sm text-gray-600 text-center">
         {sales?.sales30d || 0}
       </td>
+      {/* 재고상태 */}
       <td className="px-4 py-3 text-center">
-        <StockStatusBadge isInStock={isInStock} quantity={stockQty} />
-      </td>
-      <td className="px-4 py-3 text-sm text-gray-900 text-right font-medium">
-        {stockQty.toLocaleString()}
-      </td>
-      <td className="px-4 py-3 text-sm text-gray-900 text-right">
-        {formatPrice(item.salePrice)}
-      </td>
-      <td className="px-4 py-3 text-sm text-gray-600 text-right">
-        {formatPrice(item.originalPrice)}
-      </td>
-      <td className="px-4 py-3 text-center">
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-          {item.statusName}
-        </span>
+        <StockStatusBadge isInStock={isInStock} />
       </td>
     </tr>
   );
 }
 
-function StockStatusBadge({ isInStock, quantity }: { isInStock: boolean; quantity: number }) {
+function StockStatusBadge({ isInStock }: { isInStock: boolean }) {
   if (isInStock) {
     return (
       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">

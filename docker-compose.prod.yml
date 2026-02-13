@@ -4,8 +4,11 @@ services:
   backend:
     build:
       context: ./backend
+      dockerfile: Dockerfile.prod
     container_name: populer125_backend
     restart: unless-stopped
+    env_file:
+      - .env.prod
     environment:
       - PORT=8000
       - DB_PATH=/data/app.db
@@ -13,6 +16,8 @@ services:
       - ./data:/data
     ports:
       - "8000:8000"
+    networks:
+      - populer125_network
 
   frontend:
     build:
@@ -24,3 +29,12 @@ services:
     restart: unless-stopped
     ports:
       - "8080:80"
+    networks:
+      - populer125_network
+    depends_on:
+      - backend
+
+networks:
+  populer125_network:
+    driver: bridge
+

@@ -22,6 +22,10 @@ backend/tmp/
 backend/*.db
 backend/main
 backend/rocketgrowth
+backend/*.json
+
+# Debug files
+nul
 
 # Go
 *.exe

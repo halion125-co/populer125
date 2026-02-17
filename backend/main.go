@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
@@ -118,60 +117,104 @@ func getInventoryProtected(c echo.Context) error {
 	claims := c.Get("user_claims").(*auth.Claims)
 	client := coupang.NewClient(claims.VendorID, claims.AccessKey, claims.SecretKey)
 
-	// Use Rocket Warehouse Inventory Summaries API - gets ALL inventory at once!
+	// 1) Products API에서 vendorItemId -> 상품명/옵션명 매핑 생성
+	productsData, err := client.GetProducts()
+	if err != nil {
+		c.Logger().Errorf("GetProducts failed: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch products"})
+	}
+
+	type RgItemData struct {
+		VendorItemId int64 `json:"vendorItemId"`
+	}
+	type ProductItem struct {
+		ItemName          string     `json:"itemName"`
+		RocketGrowthItemData *RgItemData `json:"rocketGrowthItemData"`
+	}
+	type Product struct {
+		SellerProductName string        `json:"sellerProductName"`
+		StatusName        string        `json:"statusName"`
+		Items             []ProductItem `json:"items"`
+	}
+	type ProductsResp struct {
+		Code string    `json:"code"`
+		Data []Product `json:"data"`
+	}
+
+	var productsResp ProductsResp
+	if err := json.Unmarshal(productsData, &productsResp); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to parse products"})
+	}
+
+	// vendorItemId -> {상품명, 옵션명, 상태} 맵
+	type ItemInfo struct {
+		ProductName string
+		ItemName    string
+		StatusName  string
+	}
+	itemMap := make(map[int64]ItemInfo)
+	for _, p := range productsResp.Data {
+		for _, it := range p.Items {
+			if it.RocketGrowthItemData != nil && it.RocketGrowthItemData.VendorItemId != 0 {
+				itemMap[it.RocketGrowthItemData.VendorItemId] = ItemInfo{
+					ProductName: p.SellerProductName,
+					ItemName:    it.ItemName,
+					StatusName:  p.StatusName,
+				}
+			}
+		}
+	}
+
+	// 2) Inventory Summaries API 호출
 	invData, err := client.GetInventorySummaries()
 	if err != nil {
 		c.Logger().Errorf("GetInventorySummaries failed: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "Unable to fetch inventory from Coupang API. Please try again later.",
-		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch inventory"})
 	}
 
-	// DEBUG: Save raw response to file for inspection
-	os.WriteFile("/app/inventory_raw_response.json", invData, 0644)
-
-	// Parse the inventory summaries response
-	var invResp struct {
-		Code    interface{}       `json:"code"` // Can be string or number
-		Message string            `json:"message"`
-		Data    []json.RawMessage `json:"data"`
+	type SalesCountMap struct {
+		Last30Days int `json:"SALES_COUNT_LAST_THIRTY_DAYS"`
 	}
+	type InventoryDetails struct {
+		TotalOrderableQuantity int `json:"totalOrderableQuantity"`
+	}
+	type InvSummaryItem struct {
+		VendorItemId     int64            `json:"vendorItemId"`
+		SalesCountMap    SalesCountMap    `json:"salesCountMap"`
+		InventoryDetails InventoryDetails `json:"inventoryDetails"`
+	}
+	type InvResp struct {
+		Message string           `json:"message"`
+		Data    []InvSummaryItem `json:"data"`
+	}
+
+	var invResp InvResp
 	if err := json.Unmarshal(invData, &invResp); err != nil {
-		c.Logger().Errorf("Failed to parse inventory response: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "Failed to parse inventory data",
-		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to parse inventory"})
 	}
 
-	// DEBUG: Log first item to see actual structure
-	if len(invResp.Data) > 0 {
-		c.Logger().Infof("DEBUG: First inventory item raw JSON: %s", string(invResp.Data[0]))
-	}
-
-	// Parse each inventory item
+	// 3) 두 데이터 합산
 	type InventoryItem struct {
-		SellerProductName      string `json:"sellerProductName"`
-		VendorItemId           int64  `json:"vendorItemId"`
-		VendorItemName         string `json:"vendorItemName"`
-		Quantity               int    `json:"quantity"`
-		StockAvailableQuantity int    `json:"stockAvailableQuantity"`
-		WarehouseQuantity      int    `json:"warehouseQuantity"`
-		SalePrice              int    `json:"salePrice"`
-		OriginalPrice          int    `json:"originalPrice"`
-		StatusName             string `json:"statusName"`
+		VendorItemId     int64  `json:"vendorItemId"`
+		ProductName      string `json:"productName"`
+		ItemName         string `json:"itemName"`
+		StatusName       string `json:"statusName"`
+		StockQuantity    int    `json:"stockQuantity"`
+		SalesLast30Days  int    `json:"salesLast30Days"`
 	}
 
 	var items []InventoryItem
-	for _, itemRaw := range invResp.Data {
-		var item InventoryItem
-		if err := json.Unmarshal(itemRaw, &item); err != nil {
-			c.Logger().Warnf("Failed to parse inventory item: %v", err)
-			continue
-		}
-		items = append(items, item)
+	for _, inv := range invResp.Data {
+		info := itemMap[inv.VendorItemId]
+		items = append(items, InventoryItem{
+			VendorItemId:    inv.VendorItemId,
+			ProductName:     info.ProductName,
+			ItemName:        info.ItemName,
+			StatusName:      info.StatusName,
+			StockQuantity:   inv.InventoryDetails.TotalOrderableQuantity,
+			SalesLast30Days: inv.SalesCountMap.Last30Days,
+		})
 	}
-
-	c.Logger().Infof("Retrieved %d inventory items from Rocket Warehouse API", len(items))
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"code":    "SUCCESS",

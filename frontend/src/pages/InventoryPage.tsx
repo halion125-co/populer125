@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { apiClient } from '../lib/api';
 import type { InventoryItem, InventoryResponse } from '../types/inventory';
-import type { Order, OrderItem } from '../types/order';
 
 interface Filters {
   productName: string;
@@ -22,70 +21,26 @@ const InventoryPage = () => {
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Fetch inventory data
   const { data: inventoryItems, isLoading, error, refetch } = useQuery({
     queryKey: ['inventory'],
     queryFn: async () => {
       const response = await apiClient.get<InventoryResponse>('/api/coupang/inventory');
       return response.data.data || [];
     },
-    staleTime: 5 * 60 * 1000, // 5분 캐싱
-  });
-
-  // Fetch recent orders for sales calculation (last 30 days)
-  const { data: recentOrders } = useQuery({
-    queryKey: ['orders-recent'],
-    queryFn: async () => {
-      const to = new Date();
-      const from30 = new Date();
-      from30.setDate(from30.getDate() - 30);
-      const response = await apiClient.get('/api/coupang/orders', {
-        params: {
-          createdAtFrom: from30.toISOString().slice(0, 10),
-          createdAtTo: to.toISOString().slice(0, 10),
-        },
-      });
-      return response.data.data || [];
-    },
     staleTime: 5 * 60 * 1000,
   });
 
-  // Calculate sales per vendorItemId
-  const salesMap = useMemo(() => {
-    const map = new Map<number, { sales7d: number; sales30d: number }>();
-    if (!recentOrders) return map;
-
-    const now = Date.now();
-    const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
-
-    recentOrders.forEach((order: Order) => {
-      const paidTime = parseInt(order.paidAt);
-      order.orderItems?.forEach((item: OrderItem) => {
-        const current = map.get(item.vendorItemId) || { sales7d: 0, sales30d: 0 };
-        const quantity = item.salesQuantity || 0;
-        current.sales30d += quantity;
-        if (paidTime >= sevenDaysAgo) {
-          current.sales7d += quantity;
-        }
-        map.set(item.vendorItemId, current);
-      });
-    });
-
-    return map;
-  }, [recentOrders]);
-
-  // Client-side filtering
   const filteredItems = useMemo(() => {
     if (!inventoryItems) return [];
     return inventoryItems.filter((item: InventoryItem) => {
-      if (filters.productName && !item.sellerProductName.toLowerCase().includes(filters.productName.toLowerCase())) {
+      if (filters.productName && !item.productName.toLowerCase().includes(filters.productName.toLowerCase())) {
         return false;
       }
-      if (filters.optionName && !item.vendorItemName.toLowerCase().includes(filters.optionName.toLowerCase())) {
+      if (filters.optionName && !item.itemName.toLowerCase().includes(filters.optionName.toLowerCase())) {
         return false;
       }
       if (filters.stockStatus !== 'all') {
-        const stockQty = item.stockAvailableQuantity || 0;
+        const stockQty = item.stockQuantity || 0;
         if (filters.stockStatus === 'in_stock' && stockQty <= 0) return false;
         if (filters.stockStatus === 'out_of_stock' && stockQty > 0) return false;
       }
@@ -95,11 +50,10 @@ const InventoryPage = () => {
 
   const hasActiveFilters = filters.productName !== '' || filters.optionName !== '' || filters.stockStatus !== 'all';
 
-  // Calculate stats
   const totalItems = inventoryItems?.length || 0;
   const inStockCount = useMemo(() => {
     if (!inventoryItems) return 0;
-    return inventoryItems.filter(item => (item.stockAvailableQuantity || 0) > 0).length;
+    return inventoryItems.filter(item => (item.stockQuantity || 0) > 0).length;
   }, [inventoryItems]);
   const outOfStockCount = totalItems - inStockCount;
 
@@ -136,10 +90,7 @@ const InventoryPage = () => {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <Header
-        onBack={() => navigate({ to: '/' })}
-        onRefresh={() => refetch()}
-      />
+      <Header onBack={() => navigate({ to: '/' })} onRefresh={() => refetch()} />
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         {/* Stats */}
@@ -174,13 +125,12 @@ const InventoryPage = () => {
                 </span>
               )}
             </span>
-            <span className="text-gray-400">{showFilters ? '\u25B2' : '\u25BC'}</span>
+            <span className="text-gray-400">{showFilters ? '▲' : '▼'}</span>
           </button>
 
           {showFilters && (
             <div className="px-6 pb-4 border-t border-gray-100 pt-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* 상품명 */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">상품명</label>
                   <input
@@ -191,8 +141,6 @@ const InventoryPage = () => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
-
-                {/* 옵션명 */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">옵션명</label>
                   <input
@@ -203,8 +151,6 @@ const InventoryPage = () => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
-
-                {/* 재고 상태 */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">재고 상태</label>
                   <select
@@ -260,18 +206,13 @@ const InventoryPage = () => {
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">상품명</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">옵션</th>
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">재고수량</th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">판매량(7일)</th>
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">판매량(30일)</th>
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">재고상태</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {filteredItems.map((item: InventoryItem) => (
-                    <InventoryItemRow
-                      key={item.vendorItemId}
-                      item={item}
-                      sales={salesMap.get(item.vendorItemId)}
-                    />
+                    <InventoryItemRow key={item.vendorItemId} item={item} />
                   ))}
                 </tbody>
               </table>
@@ -288,10 +229,7 @@ function Header({ onBack, onRefresh }: { onBack: () => void; onRefresh?: () => v
     <header className="bg-white shadow">
       <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <button
-            onClick={onBack}
-            className="text-blue-600 hover:text-blue-800 font-medium"
-          >
+          <button onClick={onBack} className="text-blue-600 hover:text-blue-800 font-medium">
             &larr; 뒤로
           </button>
           <h1 className="text-2xl font-bold text-gray-800">재고 관리</h1>
@@ -309,39 +247,23 @@ function Header({ onBack, onRefresh }: { onBack: () => void; onRefresh?: () => v
   );
 }
 
-function InventoryItemRow({
-  item,
-  sales
-}: {
-  item: InventoryItem;
-  sales?: { sales7d: number; sales30d: number }
-}) {
-  const stockQty = item.stockAvailableQuantity || 0;
-  const isInStock = stockQty > 0;
+function InventoryItemRow({ item }: { item: InventoryItem }) {
+  const isInStock = (item.stockQuantity || 0) > 0;
 
   return (
     <tr className="hover:bg-gray-50">
-      {/* 상품명 */}
       <td className="px-4 py-3 text-sm text-gray-900">
-        <div className="max-w-xs truncate">{item.sellerProductName || '-'}</div>
+        <div className="max-w-xs truncate">{item.productName || '-'}</div>
       </td>
-      {/* 옵션 */}
       <td className="px-4 py-3 text-sm text-gray-700">
-        <div className="max-w-xs truncate">{item.vendorItemName || '-'}</div>
+        <div className="max-w-xs truncate">{item.itemName || '-'}</div>
       </td>
-      {/* 재고수량 */}
       <td className="px-4 py-3 text-sm text-gray-900 text-center font-medium">
-        {stockQty.toLocaleString()}
+        {(item.stockQuantity || 0).toLocaleString()}
       </td>
-      {/* 판매량(7일) */}
       <td className="px-4 py-3 text-sm text-gray-600 text-center">
-        {sales?.sales7d || 0}
+        {item.salesLast30Days || 0}
       </td>
-      {/* 판매량(30일) */}
-      <td className="px-4 py-3 text-sm text-gray-600 text-center">
-        {sales?.sales30d || 0}
-      </td>
-      {/* 재고상태 */}
       <td className="px-4 py-3 text-center">
         <StockStatusBadge isInStock={isInStock} />
       </td>

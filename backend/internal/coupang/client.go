@@ -91,7 +91,7 @@ func (c *Client) Request(method, path, query string) ([]byte, error) {
 // GetProducts fetches all products by following nextToken pagination
 func (c *Client) GetProducts() ([]byte, error) {
 	path := "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products"
-	baseQuery := fmt.Sprintf("vendorId=%s&businessTypes=rocketGrowth", c.VendorID)
+	baseQuery := fmt.Sprintf("vendorId=%s&businessTypes=rocketGrowth&maxPerPage=100", c.VendorID)
 
 	var allProducts []json.RawMessage
 
@@ -215,8 +215,42 @@ func (c *Client) GetInventory(vendorItemId string) ([]byte, error) {
 	return c.Request("GET", path, "")
 }
 
-// GetInventorySummaries fetches ALL inventory summaries from Rocket Warehouse
-func (c *Client) GetInventorySummaries() ([]byte, error) {
+// GetInventorySummaries fetches ALL inventory summaries from Rocket Warehouse (with pagination)
+func (c *Client) GetInventorySummaries() ([]json.RawMessage, error) {
 	path := fmt.Sprintf("/v2/providers/rg_open_api/apis/api/v1/vendors/%s/rg/inventory/summaries", c.VendorID)
-	return c.Request("GET", path, "")
+
+	type invPage struct {
+		Message   string            `json:"message"`
+		NextToken string            `json:"nextToken"`
+		Data      []json.RawMessage `json:"data"`
+	}
+
+	var allItems []json.RawMessage
+	nextToken := ""
+
+	for {
+		query := ""
+		if nextToken != "" {
+			query = "nextToken=" + nextToken
+		}
+
+		body, err := c.Request("GET", path, query)
+		if err != nil {
+			return nil, err
+		}
+
+		var page invPage
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, fmt.Errorf("failed to parse inventory summaries: %w", err)
+		}
+
+		allItems = append(allItems, page.Data...)
+
+		if page.NextToken == "" {
+			break
+		}
+		nextToken = page.NextToken
+	}
+
+	return allItems, nil
 }

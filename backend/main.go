@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
@@ -165,8 +166,42 @@ func getInventoryProtected(c echo.Context) error {
 		}
 	}
 
-	// 2) Inventory Summaries API 호출
-	invData, err := client.GetInventorySummaries()
+	// 2) Orders API에서 미매핑 vendorItemId 보완 (최근 3개월)
+	now := time.Now()
+	ordersTo := now.Format("2006-01-02")
+	ordersFrom := now.AddDate(0, -3, 0).Format("2006-01-02")
+	ordersData, err := client.GetOrders(ordersFrom, ordersTo)
+	if err == nil {
+		type OItem struct {
+			VendorItemId int64  `json:"vendorItemId"`
+			ProductName  string `json:"productName"`
+		}
+		type OOrder struct {
+			OrderItems []OItem `json:"orderItems"`
+		}
+		type OResp struct {
+			Data []OOrder `json:"data"`
+		}
+		var oResp OResp
+		if json.Unmarshal(ordersData, &oResp) == nil {
+			for _, order := range oResp.Data {
+				for _, oi := range order.OrderItems {
+					if oi.VendorItemId != 0 && oi.ProductName != "" {
+						if _, exists := itemMap[oi.VendorItemId]; !exists {
+							itemMap[oi.VendorItemId] = ItemInfo{
+								ProductName: oi.ProductName,
+								ItemName:    "",
+								StatusName:  "판매이력",
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 3) Inventory Summaries API 호출 (페이지네이션 자동 처리)
+	invRawItems, err := client.GetInventorySummaries()
 	if err != nil {
 		c.Logger().Errorf("GetInventorySummaries failed: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch inventory"})
@@ -183,28 +218,23 @@ func getInventoryProtected(c echo.Context) error {
 		SalesCountMap    SalesCountMap    `json:"salesCountMap"`
 		InventoryDetails InventoryDetails `json:"inventoryDetails"`
 	}
-	type InvResp struct {
-		Message string           `json:"message"`
-		Data    []InvSummaryItem `json:"data"`
-	}
-
-	var invResp InvResp
-	if err := json.Unmarshal(invData, &invResp); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to parse inventory"})
-	}
 
 	// 3) 두 데이터 합산
 	type InventoryItem struct {
-		VendorItemId     int64  `json:"vendorItemId"`
-		ProductName      string `json:"productName"`
-		ItemName         string `json:"itemName"`
-		StatusName       string `json:"statusName"`
-		StockQuantity    int    `json:"stockQuantity"`
-		SalesLast30Days  int    `json:"salesLast30Days"`
+		VendorItemId    int64  `json:"vendorItemId"`
+		ProductName     string `json:"productName"`
+		ItemName        string `json:"itemName"`
+		StatusName      string `json:"statusName"`
+		StockQuantity   int    `json:"stockQuantity"`
+		SalesLast30Days int    `json:"salesLast30Days"`
 	}
 
 	var items []InventoryItem
-	for _, inv := range invResp.Data {
+	for _, raw := range invRawItems {
+		var inv InvSummaryItem
+		if err := json.Unmarshal(raw, &inv); err != nil {
+			continue
+		}
 		info := itemMap[inv.VendorItemId]
 		items = append(items, InventoryItem{
 			VendorItemId:    inv.VendorItemId,
@@ -215,6 +245,8 @@ func getInventoryProtected(c echo.Context) error {
 			SalesLast30Days: inv.SalesCountMap.Last30Days,
 		})
 	}
+
+	c.Logger().Infof("Inventory: %d items total (from %d inv + %d products mapped)", len(items), len(invRawItems), len(itemMap))
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"code":    "SUCCESS",

@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine AS build
+FROM golang:1.24-alpine AS build
 WORKDIR /app
 
 # (필요 시) gcc 등 추가 - sqlite/cgo 쓰면 필요할 수 있음

@@ -9,20 +9,18 @@ import (
 
 // Claims represents the JWT claims structure
 type Claims struct {
-	VendorID  string `json:"vendor_id"`
-	AccessKey string `json:"access_key"`
-	SecretKey string `json:"secret_key"`
+	UserID int64  `json:"user_id"`
+	Email  string `json:"email"`
 	jwt.StandardClaims
 }
 
-// GenerateToken creates a new JWT token with the given credentials
-func GenerateToken(vendorID, accessKey, secretKey, jwtSecret string) (string, error) {
+// GenerateToken creates a new JWT token with the given user info
+func GenerateToken(userID int64, email, jwtSecret string) (string, error) {
 	expirationTime := time.Now().Add(24 * time.Hour)
 
 	claims := &Claims{
-		VendorID:  vendorID,
-		AccessKey: accessKey,
-		SecretKey: secretKey,
+		UserID: userID,
+		Email:  email,
 		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: expirationTime.Unix(),
 			IssuedAt:  time.Now().Unix(),

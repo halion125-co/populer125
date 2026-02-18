@@ -70,7 +70,7 @@ const OrdersPage = () => {
       }
 
       return true;
-    });
+    }).sort((a, b) => parseInt(b.paidAt || '0') - parseInt(a.paidAt || '0'));
   }, [orders, filters, dateRange]);
 
   const hasActiveFilters = Object.values(filters).some(v => v !== '');
@@ -314,10 +314,11 @@ const OrdersPage = () => {
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">주문번호</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">결제일시</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">옵션ID</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">상품명</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">수량</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">판매금액</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">총액</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">수량</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">판매금액</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">총액</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -366,7 +367,13 @@ function OrderRow({ order }: { order: Order }) {
     try {
       const date = new Date(parseInt(timestamp));
       if (isNaN(date.getTime())) return '-';
-      return date.toLocaleString('ko-KR');
+      const y = date.getFullYear();
+      const mo = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      const h = String(date.getHours()).padStart(2, '0');
+      const mi = String(date.getMinutes()).padStart(2, '0');
+      const s = String(date.getSeconds()).padStart(2, '0');
+      return `${y}-${mo}-${d} ${h}:${mi}:${s}`;
     } catch {
       return '-';
     }
@@ -374,7 +381,7 @@ function OrderRow({ order }: { order: Order }) {
 
   const formatPrice = (price: number | undefined) => {
     if (price === undefined || price === null) return '-';
-    return price.toLocaleString('ko-KR') + '원';
+    return Math.floor(price).toLocaleString('ko-KR') + '원';
   };
 
   const firstItem = order.orderItems?.[0];
@@ -394,21 +401,24 @@ function OrderRow({ order }: { order: Order }) {
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
         {formatDateTime(order.paidAt)}
       </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
+        {firstItem?.vendorItemId || '-'}
+      </td>
       <td className="px-6 py-4">
-        <div className="text-sm text-gray-900 max-w-xs truncate">
+        <div className="text-sm text-gray-900">
           {firstItem?.productName || '-'}
         </div>
         {order.orderItems.length > 1 && (
           <span className="text-xs text-gray-400">외 {order.orderItems.length - 1}건</span>
         )}
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">
         {totalQuantity}
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
         {formatPrice(firstItemPrice)}
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium text-right">
         {formatPrice(totalPrice)}
       </td>
     </tr>

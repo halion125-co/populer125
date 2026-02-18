@@ -1,21 +1,45 @@
 package models
 
-// LoginRequest represents the login request payload
+// LoginRequest represents the login request payload (email/password)
 type LoginRequest struct {
-	VendorID  string `json:"vendor_id" validate:"required"`
-	AccessKey string `json:"access_key" validate:"required"`
-	SecretKey string `json:"secret_key" validate:"required"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
-// LoginResponse represents the login response payload
+// RegisterRequest represents the registration request payload
+type RegisterRequest struct {
+	Email     string `json:"email"`
+	Password  string `json:"password"`
+	Phone     string `json:"phone"`
+	VendorID  string `json:"vendorId"`
+	AccessKey string `json:"accessKey"`
+	SecretKey string `json:"secretKey"`
+}
+
+// LoginResponse represents the login/register response payload
 type LoginResponse struct {
-	Token     string `json:"token"`
-	VendorID  string `json:"vendor_id"`
-	ExpiresAt int64  `json:"expires_at"`
+	Token     string      `json:"token"`
+	ExpiresAt int64       `json:"expiresAt"`
+	User      UserProfile `json:"user"`
 }
 
 // ErrorResponse represents an error response
 type ErrorResponse struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
+}
+
+// UpdateProfileRequest represents a profile update request
+type UpdateProfileRequest struct {
+	Email     string `json:"email"`
+	Phone     string `json:"phone"`
+	VendorID  string `json:"vendorId"`
+	AccessKey string `json:"accessKey"`
+	SecretKey string `json:"secretKey"`
+}
+
+// ChangePasswordRequest represents a password change request
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
 }

@@ -46,18 +46,16 @@ describe('Type Definitions', () => {
 
   it('TC009: InventoryItem type structure is valid', () => {
     const item: InventoryItem = {
-      sellerProductName: 'Test Product',
       vendorItemId: 123,
-      vendorItemName: 'Test Option',
-      quantity: 100,
-      stockAvailableQuantity: 95,
-      warehouseQuantity: 100,
-      salePrice: 10000,
-      originalPrice: 8000,
+      productName: 'Test Product',
+      itemName: 'Test Option',
       statusName: '판매중',
+      stockQuantity: 100,
+      salesLast30Days: 10,
+      isMapped: true,
     };
 
     expect(item.vendorItemId).toBe(123);
-    expect(item.stockAvailableQuantity).toBe(95);
+    expect(item.stockQuantity).toBe(100);
   });
 });

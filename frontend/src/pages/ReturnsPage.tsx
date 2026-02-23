@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { apiClient } from '../lib/api';
 import type { ReturnItem, ReturnsResponse } from '../types/returns';
@@ -7,6 +7,7 @@ import { RETURN_STATUSES } from '../types/returns';
 
 const ReturnsPage = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const [dateRange, setDateRange] = useState(() => {
     const to = new Date();
@@ -40,6 +41,14 @@ const ReturnsPage = () => {
   });
 
   const returnItems: ReturnItem[] = apiResponse?.data || [];
+  const lastSyncedAt = apiResponse?.lastSyncedAt || '';
+
+  const syncMutation = useMutation({
+    mutationFn: () => apiClient.post('/api/coupang/sync/returns'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['returns'] });
+    },
+  });
 
   // 검색 실행
   const handleSearch = () => {
@@ -56,27 +65,14 @@ const ReturnsPage = () => {
     setSearchParams({ from: newFrom, to: newTo, status });
   };
 
-  // raw 필드에서 핵심 값 추출 (API 응답 구조 미확정이므로 유연하게)
-  const getField = (item: ReturnItem, ...keys: string[]): string => {
-    for (const key of keys) {
-      const val = item[key];
-      if (val !== undefined && val !== null && val !== '') return String(val);
-    }
-    return '-';
+  const formatDateTime = (val: string | undefined) => {
+    if (!val || val === '') return '-';
+    return val.replace('T', ' ').slice(0, 19);
   };
 
-  const formatDateTime = (val: string | undefined) => {
-    if (!val) return '-';
-    // timestamp (ms) 또는 ISO 문자열 처리
-    const num = Number(val);
-    if (!isNaN(num) && num > 1000000000000) {
-      const d = new Date(num);
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
-    }
-    if (val.includes('T') || val.includes('-')) {
-      return val.replace('T', ' ').slice(0, 19);
-    }
-    return val;
+  const formatSyncTime = (t: string) => {
+    if (!t) return null;
+    return t.replace('T', ' ').slice(0, 19);
   };
 
   // 상태 배지
@@ -94,39 +90,6 @@ const ReturnsPage = () => {
       </span>
     );
   };
-
-  // raw JSON에서 표시할 주요 필드 목록 (API 응답 구조에 맞게 자동 표시)
-  const columns = useMemo(() => {
-    if (returnItems.length === 0) return [];
-    const first = returnItems[0];
-    // 핵심 필드 우선 정렬
-    const priority = ['receiptId', 'orderId', 'status', 'statusName', 'productName', 'vendorItemId', 'returnCount', 'salesQuantity', 'quantity', 'returnReason', 'createdAt', 'cancelledAt', 'returnedAt'];
-    const keys = Object.keys(first);
-    const sorted = [
-      ...priority.filter(k => keys.includes(k)),
-      ...keys.filter(k => !priority.includes(k)),
-    ];
-    return sorted.slice(0, 12); // 최대 12컬럼
-  }, [returnItems]);
-
-  const colLabels: Record<string, string> = {
-    receiptId: '접수번호',
-    orderId: '주문번호',
-    status: '상태코드',
-    statusName: '상태명',
-    productName: '상품명',
-    vendorItemId: '옵션ID',
-    returnCount: '반품수량',
-    salesQuantity: '판매수량',
-    quantity: '수량',
-    returnReason: '반품사유',
-    returnReasonCode: '사유코드',
-    createdAt: '접수일시',
-    cancelledAt: '취소일시',
-    returnedAt: '반품일시',
-  };
-
-  const dateFields = new Set(['createdAt', 'cancelledAt', 'returnedAt']);
 
   if (isLoading) {
     return (
@@ -149,17 +112,28 @@ const ReturnsPage = () => {
               &larr; 뒤로
             </button>
             <h1 className="text-2xl font-bold text-gray-800">반품 관리</h1>
+            {lastSyncedAt && (
+              <span className="text-xs text-gray-400">마지막 동기화: {formatSyncTime(lastSyncedAt)}</span>
+            )}
           </div>
           <button
-            onClick={() => refetch()}
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm"
+            onClick={() => syncMutation.mutate()}
+            disabled={syncMutation.isPending}
+            className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm disabled:opacity-60 flex items-center gap-2"
           >
-            새로고침
+            {syncMutation.isPending && <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
+            {syncMutation.isPending ? '동기화 중...' : '동기화'}
           </button>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {syncMutation.isError && (
+          <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-600">
+            동기화 실패: {(syncMutation.error as Error)?.message}
+          </div>
+        )}
+
         {/* 검색 조건 */}
         <div className="mb-6 bg-white p-5 rounded-lg shadow">
           <div className="flex flex-wrap items-end gap-4">
@@ -225,6 +199,10 @@ const ReturnsPage = () => {
               </button>
             ))}
           </div>
+
+          {!lastSyncedAt && (
+            <p className="mt-2 text-xs text-orange-600">동기화된 데이터가 없습니다. "동기화" 버튼을 눌러 데이터를 가져오세요.</p>
+          )}
         </div>
 
         {/* Stats */}
@@ -254,7 +232,11 @@ const ReturnsPage = () => {
         {returnItems.length === 0 && !isLoading ? (
           <div className="bg-white rounded-lg shadow p-12 text-center">
             <p className="text-gray-500 text-lg">조회된 반품 내역이 없습니다</p>
-            <p className="text-gray-400 text-sm mt-2">기간 또는 상태 조건을 변경하여 다시 조회해보세요</p>
+            {!lastSyncedAt ? (
+              <p className="text-gray-400 text-sm mt-2">먼저 동기화 버튼을 눌러 데이터를 가져오세요.</p>
+            ) : (
+              <p className="text-gray-400 text-sm mt-2">기간 또는 상태 조건을 변경하여 다시 조회해보세요</p>
+            )}
           </div>
         ) : (
           <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -268,49 +250,35 @@ const ReturnsPage = () => {
               <table className="min-w-full divide-y divide-gray-200 text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    {columns.length > 0 ? (
-                      columns.map(col => (
-                        <th key={col} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                          {colLabels[col] || col}
-                        </th>
-                      ))
-                    ) : (
-                      <>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">접수번호</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">주문번호</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">상태</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">상품명</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">접수일시</th>
-                      </>
-                    )}
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">접수번호</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">주문번호</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">상태</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">상품명</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">옵션ID</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">반품수량</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">반품사유</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">접수일시</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">반품완료일시</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {returnItems.map((item, idx) => (
                     <tr key={item.receiptId ?? idx} className="hover:bg-gray-50">
-                      {columns.length > 0 ? (
-                        columns.map(col => (
-                          <td key={col} className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
-                            {col === 'status' || col === 'statusName' ? (
-                              <StatusBadge s={String(item[col] || '')} />
-                            ) : dateFields.has(col) ? (
-                              formatDateTime(item[col] as string)
-                            ) : col === 'productName' ? (
-                              <div className="max-w-xs">{getField(item, col)}</div>
-                            ) : (
-                              getField(item, col)
-                            )}
-                          </td>
-                        ))
-                      ) : (
-                        <>
-                          <td className="px-4 py-3">{getField(item, 'receiptId')}</td>
-                          <td className="px-4 py-3">{getField(item, 'orderId')}</td>
-                          <td className="px-4 py-3"><StatusBadge s={getField(item, 'status', 'statusName')} /></td>
-                          <td className="px-4 py-3">{getField(item, 'productName')}</td>
-                          <td className="px-4 py-3">{formatDateTime(item.createdAt)}</td>
-                        </>
-                      )}
+                      <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap font-mono">{item.receiptId}</td>
+                      <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap font-mono">{item.orderId}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <StatusBadge s={String(item.status || '')} />
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-700">
+                        <div className="max-w-xs truncate">{item.productName || '-'}</div>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap font-mono">{item.vendorItemId || '-'}</td>
+                      <td className="px-4 py-3 text-sm text-gray-700 text-center">{item.returnCount || item.quantity || '-'}</td>
+                      <td className="px-4 py-3 text-sm text-gray-700">
+                        <div className="max-w-xs truncate">{item.returnReason || '-'}</div>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{formatDateTime(item.createdAt)}</td>
+                      <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{formatDateTime(item.returnedAt)}</td>
                     </tr>
                   ))}
                 </tbody>

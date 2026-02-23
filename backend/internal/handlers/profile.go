@@ -17,21 +17,28 @@ func GetProfile(c echo.Context) error {
 	user := c.Get("user").(*middleware.UserContext)
 
 	var profile models.UserProfile
+	var secretKey string
 	err := database.DB.QueryRow(
-		"SELECT id, email, phone, vendor_id, access_key, secret_key, created_at FROM users WHERE id = ?",
+		`SELECT id, email, phone, vendor_id, access_key, secret_key,
+		        name_ko, name_en, zipcode, address_ko, address_detail_ko,
+		        address_en, address_detail_en, customs_type, customs_number,
+		        created_at
+		 FROM users WHERE id = ?`,
 		user.UserID,
-	).Scan(&profile.ID, &profile.Email, &profile.Phone, &profile.VendorID, &profile.AccessKey, &profile.HasSecret, &profile.CreatedAt)
+	).Scan(
+		&profile.ID, &profile.Email, &profile.Phone, &profile.VendorID, &profile.AccessKey, &secretKey,
+		&profile.NameKo, &profile.NameEn, &profile.Zipcode,
+		&profile.AddressKo, &profile.AddressDetailKo,
+		&profile.AddressEn, &profile.AddressDetailEn,
+		&profile.CustomsType, &profile.CustomsNumber,
+		&profile.CreatedAt,
+	)
 	if err == sql.ErrNoRows {
 		return echo.NewHTTPError(http.StatusNotFound, "사용자를 찾을 수 없습니다")
 	}
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "서버 오류가 발생했습니다")
 	}
-
-	// HasSecret: convert non-empty string to true
-	// Re-query with secret_key to check
-	var secretKey string
-	database.DB.QueryRow("SELECT secret_key FROM users WHERE id = ?", user.UserID).Scan(&secretKey)
 	profile.HasSecret = secretKey != ""
 
 	return c.JSON(http.StatusOK, profile)
@@ -51,13 +58,27 @@ func UpdateProfile(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "이메일은 필수입니다")
 	}
 
+	customsType := strings.TrimSpace(req.CustomsType)
+	if customsType == "" {
+		customsType = "personal"
+	}
+
 	// Build update query - only update secret_key if provided
 	if req.SecretKey != "" {
 		_, err := database.DB.Exec(
-			`UPDATE users SET email=?, phone=?, vendor_id=?, access_key=?, secret_key=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+			`UPDATE users SET email=?, phone=?, vendor_id=?, access_key=?, secret_key=?,
+			 name_ko=?, name_en=?, zipcode=?, address_ko=?, address_detail_ko=?,
+			 address_en=?, address_detail_en=?, customs_type=?, customs_number=?,
+			 updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 			req.Email, strings.TrimSpace(req.Phone),
 			strings.TrimSpace(req.VendorID), strings.TrimSpace(req.AccessKey),
-			strings.TrimSpace(req.SecretKey), user.UserID,
+			strings.TrimSpace(req.SecretKey),
+			strings.TrimSpace(req.NameKo), strings.TrimSpace(req.NameEn),
+			strings.TrimSpace(req.Zipcode),
+			strings.TrimSpace(req.AddressKo), strings.TrimSpace(req.AddressDetailKo),
+			strings.TrimSpace(req.AddressEn), strings.TrimSpace(req.AddressDetailEn),
+			customsType, strings.TrimSpace(req.CustomsNumber),
+			user.UserID,
 		)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -67,9 +88,17 @@ func UpdateProfile(c echo.Context) error {
 		}
 	} else {
 		_, err := database.DB.Exec(
-			`UPDATE users SET email=?, phone=?, vendor_id=?, access_key=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+			`UPDATE users SET email=?, phone=?, vendor_id=?, access_key=?,
+			 name_ko=?, name_en=?, zipcode=?, address_ko=?, address_detail_ko=?,
+			 address_en=?, address_detail_en=?, customs_type=?, customs_number=?,
+			 updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 			req.Email, strings.TrimSpace(req.Phone),
 			strings.TrimSpace(req.VendorID), strings.TrimSpace(req.AccessKey),
+			strings.TrimSpace(req.NameKo), strings.TrimSpace(req.NameEn),
+			strings.TrimSpace(req.Zipcode),
+			strings.TrimSpace(req.AddressKo), strings.TrimSpace(req.AddressDetailKo),
+			strings.TrimSpace(req.AddressEn), strings.TrimSpace(req.AddressDetailEn),
+			customsType, strings.TrimSpace(req.CustomsNumber),
 			user.UserID,
 		)
 		if err != nil {

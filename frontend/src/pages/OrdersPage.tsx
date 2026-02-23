@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { apiClient } from '../lib/api';
 import type { Order, OrdersResponse } from '../types/order';
@@ -16,81 +16,68 @@ const initialFilters: Filters = {
 
 const OrdersPage = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Date range state - default to last 7 days
+  // Date range state - default to last 30 days
   const [dateRange, setDateRange] = useState(() => {
     const to = new Date();
     const from = new Date();
-    from.setDate(from.getDate() - 7);
+    from.setDate(from.getDate() - 30);
     return {
       from: from.toISOString().slice(0, 10),
       to: to.toISOString().slice(0, 10),
     };
   });
 
-  const { data: orders, isLoading, error, refetch } = useQuery({
+  const { data: apiResponse, isLoading, error, refetch } = useQuery({
     queryKey: ['orders', dateRange.from, dateRange.to],
     queryFn: async () => {
       const response = await apiClient.get<OrdersResponse>('/api/coupang/orders', {
         params: {
           createdAtFrom: dateRange.from,
-          createdAtTo: dateRange.to,
+          createdAtTo: dateRange.to + 'T23:59:59',
         },
       });
-      return response.data.data || [];
+      return response.data;
     },
   });
 
-  // Client-side filtering (including date range validation)
+  const orders = apiResponse?.data || [];
+  const lastSyncedAt = apiResponse?.lastSyncedAt || '';
+
+  const syncMutation = useMutation({
+    mutationFn: () => apiClient.post('/api/coupang/sync/orders'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+    },
+  });
+
+  // Client-side filtering
   const filteredOrders = useMemo(() => {
-    if (!orders) return [];
-
-    // Parse date range for filtering
-    const fromDate = new Date(dateRange.from);
-    fromDate.setHours(0, 0, 0, 0);
-    const toDate = new Date(dateRange.to);
-    toDate.setHours(23, 59, 59, 999);
-
     return orders.filter((o: Order) => {
-      // Filter by date range (paidAt)
-      if (o.paidAt) {
-        const paidDate = new Date(parseInt(o.paidAt));
-        if (paidDate < fromDate || paidDate > toDate) return false;
-      }
-
-      // Filter by orderId
       if (filters.orderId && !String(o.orderId).includes(filters.orderId)) return false;
-
-      // Filter by productName
       if (filters.productName) {
         const itemName = o.orderItems?.[0]?.productName || '';
         if (!itemName.toLowerCase().includes(filters.productName.toLowerCase())) return false;
       }
-
       return true;
-    }).sort((a, b) => parseInt(b.paidAt || '0') - parseInt(a.paidAt || '0'));
-  }, [orders, filters, dateRange]);
+    }).sort((a, b) => b.paidAt.localeCompare(a.paidAt));
+  }, [orders, filters]);
 
   const hasActiveFilters = Object.values(filters).some(v => v !== '');
 
-  // Calculate total sales amount
   const totalSales = useMemo(() => {
-    if (!filteredOrders || filteredOrders.length === 0) return 0;
     return filteredOrders.reduce((sum, order) => {
       if (!order.orderItems) return sum;
-      const orderTotal = order.orderItems.reduce((itemSum, item) => {
-        const price = item.salesPrice || item.unitSalesPrice || 0;
-        return itemSum + (price * (item.salesQuantity || 0));
+      return sum + order.orderItems.reduce((itemSum, item) => {
+        return itemSum + ((item.salesPrice || 0) * (item.salesQuantity || 0));
       }, 0);
-      return sum + orderTotal;
     }, 0);
   }, [filteredOrders]);
 
-  // Calculate total items
   const totalItems = useMemo(() => {
-    if (!filteredOrders || filteredOrders.length === 0) return 0;
     return filteredOrders.reduce((sum, order) => {
       if (!order.orderItems) return sum;
       return sum + order.orderItems.reduce((itemSum, item) => itemSum + (item.salesQuantity || 0), 0);
@@ -111,15 +98,12 @@ const OrdersPage = () => {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-100">
-        <Header onBack={() => navigate({ to: '/' })} />
+        <Header onBack={() => navigate({ to: '/' })} onSync={() => syncMutation.mutate()} isSyncing={syncMutation.isPending} lastSyncedAt={lastSyncedAt} />
         <main className="max-w-7xl mx-auto px-4 py-8">
           <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
             <p className="text-red-600 font-medium mb-2">주문 목록을 불러올 수 없습니다</p>
             <p className="text-red-500 text-sm mb-4">{(error as Error).message}</p>
-            <button
-              onClick={() => refetch()}
-              className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
-            >
+            <button onClick={() => refetch()} className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">
               다시 시도
             </button>
           </div>
@@ -128,14 +112,22 @@ const OrdersPage = () => {
     );
   }
 
-  const orderList = orders || [];
-
   return (
     <div className="min-h-screen bg-gray-100">
       <Header
         onBack={() => navigate({ to: '/' })}
-        onRefresh={() => refetch()}
+        onSync={() => syncMutation.mutate()}
+        isSyncing={syncMutation.isPending}
+        lastSyncedAt={lastSyncedAt}
       />
+
+      {syncMutation.isError && (
+        <div className="max-w-7xl mx-auto px-4 pt-4">
+          <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-600">
+            동기화 실패: {(syncMutation.error as Error)?.message}
+          </div>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         {/* Date Range Selector */}
@@ -159,10 +151,7 @@ const OrdersPage = () => {
               <button
                 onClick={() => {
                   const today = new Date();
-                  setDateRange({
-                    from: today.toISOString().slice(0, 10),
-                    to: today.toISOString().slice(0, 10)
-                  });
+                  setDateRange({ from: today.toISOString().slice(0, 10), to: today.toISOString().slice(0, 10) });
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
               >
@@ -172,10 +161,7 @@ const OrdersPage = () => {
                 onClick={() => {
                   const yesterday = new Date();
                   yesterday.setDate(yesterday.getDate() - 1);
-                  setDateRange({
-                    from: yesterday.toISOString().slice(0, 10),
-                    to: yesterday.toISOString().slice(0, 10)
-                  });
+                  setDateRange({ from: yesterday.toISOString().slice(0, 10), to: yesterday.toISOString().slice(0, 10) });
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
               >
@@ -205,6 +191,9 @@ const OrdersPage = () => {
               </button>
             </div>
           </div>
+          {!lastSyncedAt && (
+            <p className="mt-2 text-xs text-orange-600">동기화된 데이터가 없습니다. "동기화" 버튼을 눌러 데이터를 가져오세요.</p>
+          )}
         </div>
 
         {/* Stats */}
@@ -212,20 +201,16 @@ const OrdersPage = () => {
           <div className="bg-white p-4 rounded-lg shadow">
             <p className="text-sm text-gray-500">총 주문</p>
             <p className="text-2xl font-bold text-blue-600">
-              {hasActiveFilters ? `${filteredOrders.length} / ${orderList.length}` : orderList.length}
+              {hasActiveFilters ? `${filteredOrders.length} / ${orders.length}` : orders.length}
             </p>
           </div>
           <div className="bg-white p-4 rounded-lg shadow">
             <p className="text-sm text-gray-500">총 판매수량</p>
-            <p className="text-2xl font-bold text-green-600">
-              {totalItems}개
-            </p>
+            <p className="text-2xl font-bold text-green-600">{totalItems}개</p>
           </div>
           <div className="bg-white p-4 rounded-lg shadow">
             <p className="text-sm text-gray-500">총 판매금액</p>
-            <p className="text-2xl font-bold text-orange-600">
-              {totalSales.toLocaleString('ko-KR')}원
-            </p>
+            <p className="text-2xl font-bold text-orange-600">{totalSales.toLocaleString('ko-KR')}원</p>
           </div>
         </div>
 
@@ -238,18 +223,15 @@ const OrdersPage = () => {
             <span className="font-medium text-gray-700">
               검색 조건
               {hasActiveFilters && (
-                <span className="ml-2 px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full">
-                  필터 적용중
-                </span>
+                <span className="ml-2 px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full">필터 적용중</span>
               )}
             </span>
-            <span className="text-gray-400">{showFilters ? '\u25B2' : '\u25BC'}</span>
+            <span className="text-gray-400">{showFilters ? '▲' : '▼'}</span>
           </button>
 
           {showFilters && (
             <div className="px-6 pb-4 border-t border-gray-100 pt-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* 주문번호 */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">주문번호</label>
                   <input
@@ -260,8 +242,6 @@ const OrdersPage = () => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
-
-                {/* 상품명 */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">상품명</label>
                   <input
@@ -273,7 +253,6 @@ const OrdersPage = () => {
                   />
                 </div>
               </div>
-
               {hasActiveFilters && (
                 <div className="mt-4 flex items-center justify-between">
                   <p className="text-sm text-gray-500">
@@ -297,11 +276,11 @@ const OrdersPage = () => {
             <p className="text-gray-500 text-lg">
               {hasActiveFilters ? '검색 조건에 맞는 주문이 없습니다' : '조회된 주문이 없습니다'}
             </p>
+            {!lastSyncedAt && (
+              <p className="text-gray-400 text-sm mt-2">먼저 동기화 버튼을 눌러 데이터를 가져오세요.</p>
+            )}
             {hasActiveFilters && (
-              <button
-                onClick={() => setFilters(initialFilters)}
-                className="mt-3 px-4 py-2 text-sm text-blue-600 hover:text-blue-800"
-              >
+              <button onClick={() => setFilters(initialFilters)} className="mt-3 px-4 py-2 text-sm text-blue-600 hover:text-blue-800">
                 필터 초기화
               </button>
             )}
@@ -313,7 +292,7 @@ const OrdersPage = () => {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">주문번호</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">결제일시</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">결제일</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">옵션ID</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">상품명</th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">수량</th>
@@ -335,50 +314,48 @@ const OrdersPage = () => {
   );
 };
 
-function Header({ onBack, onRefresh }: { onBack: () => void; onRefresh?: () => void }) {
+function Header({
+  onBack,
+  onSync,
+  isSyncing,
+  lastSyncedAt,
+}: {
+  onBack: () => void;
+  onSync: () => void;
+  isSyncing: boolean;
+  lastSyncedAt: string;
+}) {
+  const formatSyncTime = (t: string) => {
+    if (!t) return null;
+    return t.replace('T', ' ').slice(0, 19);
+  };
+
   return (
     <header className="bg-white shadow">
       <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <button
-            onClick={onBack}
-            className="text-blue-600 hover:text-blue-800 font-medium"
-          >
+          <button onClick={onBack} className="text-blue-600 hover:text-blue-800 font-medium">
             &larr; 뒤로
           </button>
           <h1 className="text-2xl font-bold text-gray-800">주문 관리</h1>
+          {lastSyncedAt && (
+            <span className="text-xs text-gray-400">마지막 동기화: {formatSyncTime(lastSyncedAt)}</span>
+          )}
         </div>
-        {onRefresh && (
-          <button
-            onClick={onRefresh}
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm"
-          >
-            새로고침
-          </button>
-        )}
+        <button
+          onClick={onSync}
+          disabled={isSyncing}
+          className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm disabled:opacity-60 flex items-center gap-2"
+        >
+          {isSyncing && <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
+          {isSyncing ? '동기화 중...' : '동기화'}
+        </button>
       </div>
     </header>
   );
 }
 
 function OrderRow({ order }: { order: Order }) {
-  const formatDateTime = (timestamp: string) => {
-    if (!timestamp) return '-';
-    try {
-      const date = new Date(parseInt(timestamp));
-      if (isNaN(date.getTime())) return '-';
-      const y = date.getFullYear();
-      const mo = String(date.getMonth() + 1).padStart(2, '0');
-      const d = String(date.getDate()).padStart(2, '0');
-      const h = String(date.getHours()).padStart(2, '0');
-      const mi = String(date.getMinutes()).padStart(2, '0');
-      const s = String(date.getSeconds()).padStart(2, '0');
-      return `${y}-${mo}-${d} ${h}:${mi}:${s}`;
-    } catch {
-      return '-';
-    }
-  };
-
   const formatPrice = (price: number | undefined) => {
     if (price === undefined || price === null) return '-';
     return Math.floor(price).toLocaleString('ko-KR') + '원';
@@ -387,40 +364,23 @@ function OrderRow({ order }: { order: Order }) {
   const firstItem = order.orderItems?.[0];
   const totalQuantity = order.orderItems?.reduce((sum, item) => sum + (item.salesQuantity || 0), 0) || 0;
   const totalPrice = order.orderItems?.reduce((sum, item) => {
-    const price = item.salesPrice || item.unitSalesPrice || 0;
-    return sum + (price * (item.salesQuantity || 0));
+    return sum + ((item.salesPrice || 0) * (item.salesQuantity || 0));
   }, 0) || 0;
-
-  const firstItemPrice = firstItem ? (firstItem.salesPrice || firstItem.unitSalesPrice || 0) : 0;
 
   return (
     <tr className="hover:bg-gray-50">
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
-        {order.orderId}
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-        {formatDateTime(order.paidAt)}
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
-        {firstItem?.vendorItemId || '-'}
-      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">{order.orderId}</td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{order.paidAt || '-'}</td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">{firstItem?.vendorItemId || '-'}</td>
       <td className="px-6 py-4">
-        <div className="text-sm text-gray-900">
-          {firstItem?.productName || '-'}
-        </div>
+        <div className="text-sm text-gray-900">{firstItem?.productName || '-'}</div>
         {order.orderItems.length > 1 && (
           <span className="text-xs text-gray-400">외 {order.orderItems.length - 1}건</span>
         )}
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">
-        {totalQuantity}
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
-        {formatPrice(firstItemPrice)}
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium text-right">
-        {formatPrice(totalPrice)}
-      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">{totalQuantity}</td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">{formatPrice(firstItem?.salesPrice)}</td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium text-right">{formatPrice(totalPrice)}</td>
     </tr>
   );
 }

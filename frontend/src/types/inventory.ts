@@ -10,10 +10,10 @@ export interface InventoryItem {
 
 export interface InventoryResponse {
   code: string;
-  message: string;
   data: InventoryItem[];
   total: number;
   page: number;
   pageSize: number;
   totalPages: number;
+  lastSyncedAt: string;
 }

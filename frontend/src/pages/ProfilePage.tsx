@@ -1,29 +1,54 @@
-import { useState, useContext, useEffect } from 'react';
+import { useState, useContext, useEffect, useCallback } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { AuthContext } from '../contexts/AuthContext';
 import { apiClient } from '../lib/api';
 
 type Tab = 'basic' | 'coupang' | 'security';
 
+declare global {
+  interface Window {
+    daum: {
+      Postcode: new (options: {
+        oncomplete: (data: DaumAddressData) => void;
+      }) => { open: () => void };
+    };
+  }
+}
+
+interface DaumAddressData {
+  zonecode: string;
+  roadAddress: string;
+  roadAddressEnglish: string;
+  jibunAddress: string;
+  buildingName: string;
+  apartment: string;
+}
+
 const ProfilePage = () => {
   const auth = useContext(AuthContext);
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<Tab>('basic');
 
-  // Basic info form
   const [basicForm, setBasicForm] = useState({
     email: auth?.user?.email || '',
     phone: auth?.user?.phone || '',
+    nameKo: auth?.user?.nameKo || '',
+    nameEn: auth?.user?.nameEn || '',
+    zipcode: auth?.user?.zipcode || '',
+    addressKo: auth?.user?.addressKo || '',
+    addressDetailKo: auth?.user?.addressDetailKo || '',
+    addressEn: auth?.user?.addressEn || '',
+    addressDetailEn: auth?.user?.addressDetailEn || '',
+    customsType: auth?.user?.customsType || 'personal',
+    customsNumber: auth?.user?.customsNumber || '',
   });
 
-  // Coupang API form
   const [coupangForm, setCoupangForm] = useState({
     vendorId: auth?.user?.vendorId || '',
     accessKey: auth?.user?.accessKey || '',
     secretKey: '',
   });
 
-  // Password form
   const [pwForm, setPwForm] = useState({
     currentPassword: '',
     newPassword: '',
@@ -35,10 +60,55 @@ const ProfilePage = () => {
 
   useEffect(() => {
     if (auth?.user) {
-      setBasicForm({ email: auth.user.email, phone: auth.user.phone });
+      setBasicForm({
+        email: auth.user.email,
+        phone: auth.user.phone,
+        nameKo: auth.user.nameKo || '',
+        nameEn: auth.user.nameEn || '',
+        zipcode: auth.user.zipcode || '',
+        addressKo: auth.user.addressKo || '',
+        addressDetailKo: auth.user.addressDetailKo || '',
+        addressEn: auth.user.addressEn || '',
+        addressDetailEn: auth.user.addressDetailEn || '',
+        customsType: auth.user.customsType || 'personal',
+        customsNumber: auth.user.customsNumber || '',
+      });
       setCoupangForm(f => ({ ...f, vendorId: auth.user!.vendorId, accessKey: auth.user!.accessKey }));
     }
   }, [auth?.user]);
+
+  // Load Daum Postcode script
+  useEffect(() => {
+    if (document.getElementById('daum-postcode-script')) return;
+    const script = document.createElement('script');
+    script.id = 'daum-postcode-script';
+    script.src = 'https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js';
+    script.async = true;
+    document.head.appendChild(script);
+  }, []);
+
+  const handleAddressSearch = useCallback(() => {
+    if (!window.daum?.Postcode) {
+      alert('주소 검색 서비스를 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
+      return;
+    }
+    new window.daum.Postcode({
+      oncomplete: (data: DaumAddressData) => {
+        const roadAddr = data.roadAddress;
+        const roadAddrEn = data.roadAddressEnglish;
+        const building = data.buildingName && data.apartment === 'Y' ? ` (${data.buildingName})` : '';
+
+        setBasicForm(f => ({
+          ...f,
+          zipcode: data.zonecode,
+          addressKo: roadAddr + building,
+          addressEn: roadAddrEn,
+          addressDetailKo: '',
+          addressDetailEn: '',
+        }));
+      },
+    }).open();
+  }, []);
 
   const showMsg = (type: 'success' | 'error', text: string) => {
     setMessage({ type, text });
@@ -54,6 +124,15 @@ const ProfilePage = () => {
         vendorId: coupangForm.vendorId,
         accessKey: coupangForm.accessKey,
         secretKey: '',
+        nameKo: basicForm.nameKo,
+        nameEn: basicForm.nameEn,
+        zipcode: basicForm.zipcode,
+        addressKo: basicForm.addressKo,
+        addressDetailKo: basicForm.addressDetailKo,
+        addressEn: basicForm.addressEn,
+        addressDetailEn: basicForm.addressDetailEn,
+        customsType: basicForm.customsType,
+        customsNumber: basicForm.customsNumber,
       });
       await auth?.refreshUser();
       showMsg('success', '기본 정보가 저장되었습니다.');
@@ -74,6 +153,15 @@ const ProfilePage = () => {
         vendorId: coupangForm.vendorId,
         accessKey: coupangForm.accessKey,
         secretKey: coupangForm.secretKey,
+        nameKo: basicForm.nameKo,
+        nameEn: basicForm.nameEn,
+        zipcode: basicForm.zipcode,
+        addressKo: basicForm.addressKo,
+        addressDetailKo: basicForm.addressDetailKo,
+        addressEn: basicForm.addressEn,
+        addressDetailEn: basicForm.addressDetailEn,
+        customsType: basicForm.customsType,
+        customsNumber: basicForm.customsNumber,
       });
       setCoupangForm(f => ({ ...f, secretKey: '' }));
       await auth?.refreshUser();
@@ -116,6 +204,9 @@ const ProfilePage = () => {
     { key: 'coupang', label: '쿠팡 API' },
     { key: 'security', label: '보안' },
   ];
+
+  const inputClass = 'w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm';
+  const labelClass = 'block text-sm font-medium text-gray-700 mb-1';
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -175,26 +266,149 @@ const ProfilePage = () => {
           <div className="p-6">
             {/* 기본 정보 탭 */}
             {activeTab === 'basic' && (
-              <div className="space-y-4 max-w-md">
+              <div className="space-y-5 max-w-lg">
+                {/* 이름 */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={labelClass}>이름 (한글)</label>
+                    <input
+                      type="text"
+                      value={basicForm.nameKo}
+                      onChange={e => setBasicForm({ ...basicForm, nameKo: e.target.value })}
+                      className={inputClass}
+                      placeholder="홍길동"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>이름 (영문)</label>
+                    <input
+                      type="text"
+                      value={basicForm.nameEn}
+                      onChange={e => setBasicForm({ ...basicForm, nameEn: e.target.value })}
+                      className={inputClass}
+                      placeholder="HONG GILDONG"
+                    />
+                  </div>
+                </div>
+
+                {/* 이메일 / 전화번호 */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={labelClass}>이메일</label>
+                    <input
+                      type="email"
+                      value={basicForm.email}
+                      onChange={e => setBasicForm({ ...basicForm, email: e.target.value })}
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>휴대폰 번호</label>
+                    <input
+                      type="tel"
+                      value={basicForm.phone}
+                      onChange={e => setBasicForm({ ...basicForm, phone: e.target.value })}
+                      className={inputClass}
+                      placeholder="010-0000-0000"
+                    />
+                  </div>
+                </div>
+
+                {/* 주소 */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">이메일</label>
+                  <label className={labelClass}>주소 (한글)</label>
+                  <div className="flex gap-2 mb-2">
+                    <input
+                      type="text"
+                      value={basicForm.zipcode}
+                      readOnly
+                      className={`${inputClass} w-32 bg-gray-50 cursor-default`}
+                      placeholder="우편번호"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddressSearch}
+                      className="px-4 py-2 bg-gray-600 text-white text-sm rounded-md hover:bg-gray-700 whitespace-nowrap"
+                    >
+                      주소 검색
+                    </button>
+                  </div>
                   <input
-                    type="email"
-                    value={basicForm.email}
-                    onChange={e => setBasicForm({ ...basicForm, email: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    type="text"
+                    value={basicForm.addressKo}
+                    readOnly
+                    className={`${inputClass} bg-gray-50 cursor-default mb-2`}
+                    placeholder="도로명 주소"
+                  />
+                  <input
+                    type="text"
+                    value={basicForm.addressDetailKo}
+                    onChange={e => setBasicForm({ ...basicForm, addressDetailKo: e.target.value })}
+                    className={inputClass}
+                    placeholder="상세주소 (동/호수 등)"
                   />
                 </div>
+
+                {/* 영문 주소 */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">전화번호</label>
+                  <label className={labelClass}>주소 (영문)</label>
                   <input
-                    type="tel"
-                    value={basicForm.phone}
-                    onChange={e => setBasicForm({ ...basicForm, phone: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="010-0000-0000"
+                    type="text"
+                    value={basicForm.addressEn}
+                    readOnly
+                    className={`${inputClass} bg-gray-50 cursor-default mb-2`}
+                    placeholder="영문 주소 (주소 검색 시 자동 입력)"
+                  />
+                  <input
+                    type="text"
+                    value={basicForm.addressDetailEn}
+                    onChange={e => setBasicForm({ ...basicForm, addressDetailEn: e.target.value })}
+                    className={inputClass}
+                    placeholder="영문 상세주소"
                   />
                 </div>
+
+                {/* 통관 정보 */}
+                <div>
+                  <label className={labelClass}>통관구분</label>
+                  <div className="flex gap-4 mb-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="customsType"
+                        value="personal"
+                        checked={basicForm.customsType === 'personal'}
+                        onChange={() => setBasicForm({ ...basicForm, customsType: 'personal' })}
+                        className="accent-blue-500"
+                      />
+                      <span className="text-sm text-gray-700">개인</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="customsType"
+                        value="business"
+                        checked={basicForm.customsType === 'business'}
+                        onChange={() => setBasicForm({ ...basicForm, customsType: 'business' })}
+                        className="accent-blue-500"
+                      />
+                      <span className="text-sm text-gray-700">사업자</span>
+                    </label>
+                  </div>
+                  <div>
+                    <label className={labelClass}>
+                      {basicForm.customsType === 'personal' ? '개인통관번호' : '사업자번호'}
+                    </label>
+                    <input
+                      type="text"
+                      value={basicForm.customsNumber}
+                      onChange={e => setBasicForm({ ...basicForm, customsNumber: e.target.value })}
+                      className={inputClass}
+                      placeholder={basicForm.customsType === 'personal' ? 'P로 시작하는 개인통관번호' : '사업자등록번호'}
+                    />
+                  </div>
+                </div>
+
                 <button
                   onClick={handleBasicSave}
                   disabled={saving}
@@ -213,27 +427,27 @@ const ProfilePage = () => {
                   쿠팡 판매자 포털에서 발급받을 수 있습니다.
                 </p>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">업체코드 (Vendor ID)</label>
+                  <label className={labelClass}>업체코드 (Vendor ID)</label>
                   <input
                     type="text"
                     value={coupangForm.vendorId}
                     onChange={e => setCoupangForm({ ...coupangForm, vendorId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className={inputClass}
                     placeholder="A01234567"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Access Key</label>
+                  <label className={labelClass}>Access Key</label>
                   <input
                     type="text"
                     value={coupangForm.accessKey}
                     onChange={e => setCoupangForm({ ...coupangForm, accessKey: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className={inputClass}
                     placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label className={labelClass}>
                     Secret Key
                     {auth?.user?.hasSecret && (
                       <span className="ml-2 text-xs text-green-600 font-normal">✓ 설정됨</span>
@@ -243,7 +457,7 @@ const ProfilePage = () => {
                     type="password"
                     value={coupangForm.secretKey}
                     onChange={e => setCoupangForm({ ...coupangForm, secretKey: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className={inputClass}
                     placeholder={auth?.user?.hasSecret ? '변경 시에만 입력 (미입력 시 유지)' : 'Secret Key 입력'}
                   />
                 </div>
@@ -260,35 +474,34 @@ const ProfilePage = () => {
             {/* 보안 탭 */}
             {activeTab === 'security' && (
               <div className="space-y-6 max-w-md">
-                {/* 비밀번호 변경 */}
                 <div className="space-y-4">
                   <h3 className="font-medium text-gray-800">비밀번호 변경</h3>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">현재 비밀번호</label>
+                    <label className={labelClass}>현재 비밀번호</label>
                     <input
                       type="password"
                       value={pwForm.currentPassword}
                       onChange={e => setPwForm({ ...pwForm, currentPassword: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={inputClass}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">새 비밀번호</label>
+                    <label className={labelClass}>새 비밀번호</label>
                     <input
                       type="password"
                       value={pwForm.newPassword}
                       onChange={e => setPwForm({ ...pwForm, newPassword: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={inputClass}
                       placeholder="6자 이상"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">새 비밀번호 확인</label>
+                    <label className={labelClass}>새 비밀번호 확인</label>
                     <input
                       type="password"
                       value={pwForm.newPasswordConfirm}
                       onChange={e => setPwForm({ ...pwForm, newPasswordConfirm: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={inputClass}
                     />
                   </div>
                   <button
@@ -300,7 +513,6 @@ const ProfilePage = () => {
                   </button>
                 </div>
 
-                {/* 이메일 인증 (추후 구현) */}
                 <div className="border-t border-gray-100 pt-6">
                   <h3 className="font-medium text-gray-800 mb-2">이메일 인증으로 비밀번호 초기화</h3>
                   <p className="text-sm text-gray-500 mb-3">

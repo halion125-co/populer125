@@ -13,37 +13,42 @@ vi.mock('@tanstack/react-router', () => ({
 vi.mock('../lib/api', () => ({
   apiClient: {
     get: vi.fn(),
+    post: vi.fn(),
   },
 }));
 
 const mockInventoryItems = [
   {
-    sellerProductName: '플라워 헤어핀',
     vendorItemId: 1001,
-    vendorItemName: '5cm 핑크',
-    salePrice: 5000,
-    originalPrice: 3000,
+    productName: '플라워 헤어핀',
+    itemName: '5cm 핑크',
     statusName: '판매중',
-    inventory: {
-      quantity: 100,
-      stockAvailableQuantity: 95,
-      warehouseQuantity: 100,
-    },
+    stockQuantity: 95,
+    salesLast30Days: 10,
+    isMapped: true,
+    syncedAt: '2024-01-01T10:00:00Z',
   },
   {
-    sellerProductName: '플라워 헤어핀',
     vendorItemId: 1002,
-    vendorItemName: '5cm 옐로우',
-    salePrice: 5000,
-    originalPrice: 3000,
+    productName: '플라워 헤어핀',
+    itemName: '5cm 옐로우',
     statusName: '판매중',
-    inventory: {
-      quantity: 0,
-      stockAvailableQuantity: 0,
-      warehouseQuantity: 0,
-    },
+    stockQuantity: 0,
+    salesLast30Days: 5,
+    isMapped: true,
+    syncedAt: '2024-01-01T10:00:00Z',
   },
 ];
+
+const mockApiResponse = {
+  code: 'SUCCESS',
+  data: mockInventoryItems,
+  total: 2,
+  page: 1,
+  pageSize: 20,
+  totalPages: 1,
+  lastSyncedAt: '2024-01-01T10:00:00Z',
+};
 
 describe('InventoryPage', () => {
   let queryClient: QueryClient;
@@ -73,12 +78,7 @@ describe('InventoryPage', () => {
   });
 
   it('TC023: displays inventory items', async () => {
-    vi.mocked(apiClient.get).mockImplementation((url) => {
-      if (url.includes('inventory')) {
-        return Promise.resolve({ data: { data: mockInventoryItems } });
-      }
-      return Promise.resolve({ data: { data: [] } });
-    });
+    vi.mocked(apiClient.get).mockResolvedValue({ data: mockApiResponse });
 
     renderWithQuery(<InventoryPage />);
 
@@ -91,12 +91,7 @@ describe('InventoryPage', () => {
   });
 
   it('TC024: displays stock status correctly', async () => {
-    vi.mocked(apiClient.get).mockImplementation((url) => {
-      if (url.includes('inventory')) {
-        return Promise.resolve({ data: { data: mockInventoryItems } });
-      }
-      return Promise.resolve({ data: { data: [] } });
-    });
+    vi.mocked(apiClient.get).mockResolvedValue({ data: mockApiResponse });
 
     renderWithQuery(<InventoryPage />);
 
@@ -109,12 +104,7 @@ describe('InventoryPage', () => {
   });
 
   it('TC025: displays stats cards', async () => {
-    vi.mocked(apiClient.get).mockImplementation((url) => {
-      if (url.includes('inventory')) {
-        return Promise.resolve({ data: { data: mockInventoryItems } });
-      }
-      return Promise.resolve({ data: { data: [] } });
-    });
+    vi.mocked(apiClient.get).mockResolvedValue({ data: mockApiResponse });
 
     renderWithQuery(<InventoryPage />);
 
@@ -129,12 +119,7 @@ describe('InventoryPage', () => {
 
   it('TC026: filters by stock status', async () => {
     const user = userEvent.setup();
-    vi.mocked(apiClient.get).mockImplementation((url) => {
-      if (url.includes('inventory')) {
-        return Promise.resolve({ data: { data: mockInventoryItems } });
-      }
-      return Promise.resolve({ data: { data: [] } });
-    });
+    vi.mocked(apiClient.get).mockResolvedValue({ data: mockApiResponse });
 
     renderWithQuery(<InventoryPage />);
 

@@ -31,11 +31,20 @@ type ErrorResponse struct {
 
 // UpdateProfileRequest represents a profile update request
 type UpdateProfileRequest struct {
-	Email     string `json:"email"`
-	Phone     string `json:"phone"`
-	VendorID  string `json:"vendorId"`
-	AccessKey string `json:"accessKey"`
-	SecretKey string `json:"secretKey"`
+	Email           string `json:"email"`
+	Phone           string `json:"phone"`
+	VendorID        string `json:"vendorId"`
+	AccessKey       string `json:"accessKey"`
+	SecretKey       string `json:"secretKey"`
+	NameKo          string `json:"nameKo"`
+	NameEn          string `json:"nameEn"`
+	Zipcode         string `json:"zipcode"`
+	AddressKo       string `json:"addressKo"`
+	AddressDetailKo string `json:"addressDetailKo"`
+	AddressEn       string `json:"addressEn"`
+	AddressDetailEn string `json:"addressDetailEn"`
+	CustomsType     string `json:"customsType"`
+	CustomsNumber   string `json:"customsNumber"`
 }
 
 // ChangePasswordRequest represents a password change request

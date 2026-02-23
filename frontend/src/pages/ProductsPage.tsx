@@ -1,8 +1,8 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { apiClient } from '../lib/api';
-import type { Product, ProductsResponse } from '../types/product';
+import type { Product, ProductsResponse, ProductItem, ProductItemsResponse } from '../types/product';
 
 interface Filters {
   productName: string;
@@ -28,25 +28,35 @@ const initialFilters: Filters = {
 
 const ProductsPage = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [showFilters, setShowFilters] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
-  const { data: products, isLoading, error, refetch } = useQuery({
+  const { data: apiResponse, isLoading, error, refetch } = useQuery({
     queryKey: ['products'],
     queryFn: async () => {
       const response = await apiClient.get<ProductsResponse>('/api/coupang/products');
-      return response.data.data || [];
+      return response.data;
+    },
+  });
+
+  const products = apiResponse?.data || [];
+  const lastSyncedAt = apiResponse?.lastSyncedAt || '';
+
+  const syncMutation = useMutation({
+    mutationFn: () => apiClient.post('/api/coupang/sync/products'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
     },
   });
 
   const statusOptions = useMemo(() => {
-    if (!products) return [];
     const statuses = new Set(products.map(p => p.statusName));
     return Array.from(statuses).sort();
   }, [products]);
 
   const filteredProducts = useMemo(() => {
-    if (!products) return [];
     return products.filter(p => {
       if (filters.productName && !p.sellerProductName.toLowerCase().includes(filters.productName.toLowerCase())) return false;
       if (filters.productId && !String(p.sellerProductId).includes(filters.productId)) return false;
@@ -54,8 +64,8 @@ const ProductsPage = () => {
       if (filters.status && p.statusName !== filters.status) return false;
       if (filters.saleDateFrom && p.saleStartedAt && p.saleStartedAt.slice(0, 10) < filters.saleDateFrom) return false;
       if (filters.saleDateTo && p.saleEndedAt && p.saleEndedAt.slice(0, 10) > filters.saleDateTo) return false;
-      if (filters.createdFrom && p.createdAt && p.createdAt.slice(0, 10) < filters.createdFrom) return false;
-      if (filters.createdTo && p.createdAt && p.createdAt.slice(0, 10) > filters.createdTo) return false;
+      if (filters.createdFrom && p.syncedAt && p.syncedAt.slice(0, 10) < filters.createdFrom) return false;
+      if (filters.createdTo && p.syncedAt && p.syncedAt.slice(0, 10) > filters.createdTo) return false;
       return true;
     });
   }, [products, filters]);
@@ -76,7 +86,7 @@ const ProductsPage = () => {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-100">
-        <Header onBack={() => navigate({ to: '/' })} />
+        <Header onBack={() => navigate({ to: '/' })} onSync={() => syncMutation.mutate()} isSyncing={syncMutation.isPending} lastSyncedAt={lastSyncedAt} />
         <main className="max-w-7xl mx-auto px-4 py-8">
           <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
             <p className="text-red-600 font-medium mb-2">상품 목록을 불러올 수 없습니다</p>
@@ -93,14 +103,22 @@ const ProductsPage = () => {
     );
   }
 
-  const productList = products || [];
-
   return (
     <div className="min-h-screen bg-gray-100">
       <Header
         onBack={() => navigate({ to: '/' })}
-        onRefresh={() => refetch()}
+        onSync={() => syncMutation.mutate()}
+        isSyncing={syncMutation.isPending}
+        lastSyncedAt={lastSyncedAt}
       />
+
+      {syncMutation.isError && (
+        <div className="max-w-7xl mx-auto px-4 pt-4">
+          <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-600">
+            동기화 실패: {(syncMutation.error as Error)?.message}
+          </div>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         {/* Stats */}
@@ -108,7 +126,7 @@ const ProductsPage = () => {
           <div className="bg-white p-4 rounded-lg shadow">
             <p className="text-sm text-gray-500">총 상품</p>
             <p className="text-2xl font-bold text-blue-600">
-              {hasActiveFilters ? `${filteredProducts.length} / ${productList.length}` : productList.length}
+              {hasActiveFilters ? `${filteredProducts.length} / ${products.length}` : products.length}
             </p>
           </div>
           <div className="bg-white p-4 rounded-lg shadow">
@@ -139,13 +157,12 @@ const ProductsPage = () => {
                 </span>
               )}
             </span>
-            <span className="text-gray-400">{showFilters ? '\u25B2' : '\u25BC'}</span>
+            <span className="text-gray-400">{showFilters ? '▲' : '▼'}</span>
           </button>
 
           {showFilters && (
             <div className="px-6 pb-4 border-t border-gray-100 pt-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* 상품명 */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">상품명</label>
                   <input
@@ -156,8 +173,6 @@ const ProductsPage = () => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
-
-                {/* 상품 ID */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">상품 ID</label>
                   <input
@@ -168,8 +183,6 @@ const ProductsPage = () => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
-
-                {/* 브랜드 */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">브랜드</label>
                   <input
@@ -180,8 +193,6 @@ const ProductsPage = () => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
-
-                {/* 상태 */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">상태</label>
                   <select
@@ -195,8 +206,6 @@ const ProductsPage = () => {
                     ))}
                   </select>
                 </div>
-
-                {/* 판매기간 */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">판매기간</label>
                   <div className="flex items-center gap-2">
@@ -215,10 +224,8 @@ const ProductsPage = () => {
                     />
                   </div>
                 </div>
-
-                {/* 등록일 */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">등록일</label>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">동기화일</label>
                   <div className="flex items-center gap-2">
                     <input
                       type="date"
@@ -236,8 +243,6 @@ const ProductsPage = () => {
                   </div>
                 </div>
               </div>
-
-              {/* 초기화 버튼 */}
               {hasActiveFilters && (
                 <div className="mt-4 flex items-center justify-between">
                   <p className="text-sm text-gray-500">
@@ -272,6 +277,9 @@ const ProductsPage = () => {
           </div>
         ) : (
           <div className="bg-white rounded-lg shadow overflow-hidden">
+            <p className="px-6 py-2 text-xs text-gray-400 border-b border-gray-100">
+              상품명 또는 상품 ID를 클릭하면 옵션 상세 정보를 볼 수 있습니다.
+            </p>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -292,13 +300,20 @@ const ProductsPage = () => {
                       판매기간
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      등록일
+                      동기화일
                     </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {filteredProducts.map((product) => (
-                    <ProductRow key={product.sellerProductId} product={product} />
+                    <ProductRow
+                      key={product.sellerProductId}
+                      product={product}
+                      isSelected={selectedProduct?.sellerProductId === product.sellerProductId}
+                      onClick={() => setSelectedProduct(
+                        selectedProduct?.sellerProductId === product.sellerProductId ? null : product
+                      )}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -306,51 +321,87 @@ const ProductsPage = () => {
           </div>
         )}
       </main>
+
+      {/* 옵션 슬라이드 패널 */}
+      {selectedProduct && (
+        <ProductItemsPanel
+          product={selectedProduct}
+          onClose={() => setSelectedProduct(null)}
+        />
+      )}
     </div>
   );
 };
 
-function Header({ onBack, onRefresh }: { onBack: () => void; onRefresh?: () => void }) {
+function Header({
+  onBack,
+  onSync,
+  isSyncing,
+  lastSyncedAt,
+}: {
+  onBack: () => void;
+  onSync: () => void;
+  isSyncing: boolean;
+  lastSyncedAt: string;
+}) {
+  const formatSyncTime = (t: string) => {
+    if (!t) return null;
+    return t.replace('T', ' ').slice(0, 19);
+  };
+
   return (
     <header className="bg-white shadow">
       <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <button
-            onClick={onBack}
-            className="text-blue-600 hover:text-blue-800 font-medium"
-          >
+          <button onClick={onBack} className="text-blue-600 hover:text-blue-800 font-medium">
             &larr; 뒤로
           </button>
           <h1 className="text-2xl font-bold text-gray-800">상품 관리</h1>
+          {lastSyncedAt && (
+            <span className="text-xs text-gray-400">마지막 동기화: {formatSyncTime(lastSyncedAt)}</span>
+          )}
         </div>
-        {onRefresh && (
-          <button
-            onClick={onRefresh}
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm"
-          >
-            새로고침
-          </button>
-        )}
+        <button
+          onClick={onSync}
+          disabled={isSyncing}
+          className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm disabled:opacity-60 flex items-center gap-2"
+        >
+          {isSyncing && <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
+          {isSyncing ? '동기화 중...' : '동기화'}
+        </button>
       </div>
     </header>
   );
 }
 
-function ProductRow({ product }: { product: Product }) {
+function ProductRow({
+  product,
+  isSelected,
+  onClick,
+}: {
+  product: Product;
+  isSelected: boolean;
+  onClick: () => void;
+}) {
   const formatDate = (dateStr: string) => {
     if (!dateStr) return '-';
     return new Date(dateStr).toLocaleDateString('ko-KR');
   };
 
   return (
-    <tr className="hover:bg-gray-50">
+    <tr
+      className={`hover:bg-blue-50 cursor-pointer transition-colors ${isSelected ? 'bg-blue-50 border-l-4 border-blue-500' : ''}`}
+      onClick={onClick}
+    >
       <td className="px-6 py-4">
-        <div className="text-sm font-medium text-gray-900 max-w-xs truncate">
+        <div className="text-sm font-medium text-blue-700 max-w-xs truncate">
           {product.sellerProductName}
         </div>
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-        {product.sellerProductId}
+      <td className="px-6 py-4 whitespace-nowrap">
+        <span className="text-sm text-blue-600 font-mono">
+          {product.sellerProductId}
+        </span>
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
         {product.brand || '-'}
@@ -362,9 +413,156 @@ function ProductRow({ product }: { product: Product }) {
         {formatDate(product.saleStartedAt)} ~ {formatDate(product.saleEndedAt)}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-        {formatDate(product.createdAt)}
+        {formatDate(product.syncedAt)}
       </td>
     </tr>
+  );
+}
+
+function ProductItemsPanel({
+  product,
+  onClose,
+}: {
+  product: Product;
+  onClose: () => void;
+}) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['product-items', product.sellerProductId],
+    queryFn: async () => {
+      const response = await apiClient.get<ProductItemsResponse>(
+        `/api/coupang/products/${product.sellerProductId}/items`
+      );
+      return response.data;
+    },
+  });
+
+  const formatPrice = (price: number) => {
+    if (!price) return '-';
+    return price.toLocaleString('ko-KR') + '원';
+  };
+
+  return (
+    <>
+      {/* 배경 오버레이 */}
+      <div
+        className="fixed inset-0 bg-black bg-opacity-30 z-40"
+        onClick={onClose}
+      />
+
+      {/* 슬라이드 패널 */}
+      <div className="fixed right-0 top-0 h-full w-full max-w-2xl bg-white shadow-2xl z-50 flex flex-col">
+        {/* 패널 헤더 */}
+        <div className="px-6 py-4 border-b border-gray-200 flex items-start justify-between bg-gray-50">
+          <div className="flex-1 min-w-0 pr-4">
+            <p className="text-xs text-gray-500 mb-1">상품 ID: {product.sellerProductId}</p>
+            <h2 className="text-base font-bold text-gray-900 leading-tight">
+              {product.sellerProductName}
+            </h2>
+            <div className="flex items-center gap-2 mt-1">
+              <StatusBadge status={product.statusName} />
+              {product.brand && (
+                <span className="text-xs text-gray-500">{product.brand}</span>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 text-2xl leading-none flex-shrink-0"
+          >
+            &times;
+          </button>
+        </div>
+
+        {/* 패널 콘텐츠 */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {isLoading && (
+            <div className="flex items-center justify-center h-32">
+              <div className="inline-block w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mr-3"></div>
+              <span className="text-gray-500 text-sm">옵션 정보를 불러오는 중...</span>
+            </div>
+          )}
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+              <p className="text-red-600 text-sm">옵션 정보를 불러올 수 없습니다.</p>
+            </div>
+          )}
+
+          {data && (
+            <>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-gray-700">
+                  옵션 목록
+                  <span className="ml-2 px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
+                    {data.items?.length ?? 0}개
+                  </span>
+                </h3>
+              </div>
+
+              {(!data.items || data.items.length === 0) ? (
+                <div className="text-center py-8 text-gray-400 text-sm">
+                  등록된 옵션이 없습니다.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {data.items.map((item: ProductItem) => (
+                    <div
+                      key={item.itemId}
+                      className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors"
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">
+                            {item.itemName || item.sellerProductItemName || '-'}
+                          </p>
+                          {item.sellerProductItemName && item.sellerProductItemName !== item.itemName && (
+                            <p className="text-xs text-gray-500 truncate mt-0.5">
+                              {item.sellerProductItemName}
+                            </p>
+                          )}
+                        </div>
+                        <ItemStatusBadge status={item.statusName} />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600 mt-2">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">옵션 ID</span>
+                          <span className="font-mono">{item.itemId}</span>
+                        </div>
+                        {item.rocketGrowthItemData?.vendorItemId && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Vendor Item ID</span>
+                            <span className="font-mono">{item.rocketGrowthItemData.vendorItemId}</span>
+                          </div>
+                        )}
+                        {item.externalVendorSku && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">SKU</span>
+                            <span className="font-mono">{item.externalVendorSku}</span>
+                          </div>
+                        )}
+                        {item.originalPrice > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">정가</span>
+                            <span>{formatPrice(item.originalPrice)}</span>
+                          </div>
+                        )}
+                        {item.salePrice > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">판매가</span>
+                            <span className="font-semibold text-blue-600">{formatPrice(item.salePrice)}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -375,12 +573,24 @@ function StatusBadge({ status }: { status: string }) {
     '삭제': 'bg-gray-100 text-gray-800',
     '반려': 'bg-yellow-100 text-yellow-800',
   };
-
   const style = styles[status] || 'bg-gray-100 text-gray-600';
-
   return (
     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${style}`}>
       {status}
+    </span>
+  );
+}
+
+function ItemStatusBadge({ status }: { status: string }) {
+  const styles: Record<string, string> = {
+    'ACTIVE': 'bg-green-100 text-green-700',
+    'INACTIVE': 'bg-gray-100 text-gray-600',
+    'SUSPENDED': 'bg-red-100 text-red-700',
+  };
+  const style = styles[status] || 'bg-gray-100 text-gray-600';
+  return (
+    <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full flex-shrink-0 ml-2 ${style}`}>
+      {status || '-'}
     </span>
   );
 }

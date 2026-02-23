@@ -2,21 +2,20 @@ export interface OrderItem {
   vendorItemId: number;
   productName: string;
   salesQuantity: number;
-  salesPrice?: number; // 문서에는 salesPrice
-  unitSalesPrice?: number; // 실제 응답에는 unitSalesPrice일 수 있음
-  currency: string;
+  unitPrice: number;
+  salesPrice: number;
 }
 
 export interface Order {
   orderId: number;
-  vendorId: string;
-  paidAt: string; // timestamp in milliseconds (e.g., "1746093162000")
+  paidAt: string; // ISO date string from DB (e.g., "2025-01-15")
+  syncedAt: string;
   orderItems: OrderItem[];
 }
 
 export interface OrdersResponse {
-  code: number;
-  message: string;
+  code: string;
   data: Order[];
-  nextToken?: string;
+  total: number;
+  lastSyncedAt: string;
 }

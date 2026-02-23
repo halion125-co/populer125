@@ -13,35 +13,36 @@ vi.mock('@tanstack/react-router', () => ({
 vi.mock('../lib/api', () => ({
   apiClient: {
     get: vi.fn(),
+    post: vi.fn(),
   },
 }));
 
 const mockOrders = [
   {
     orderId: 12345,
-    vendorId: 'A01407257',
-    paidAt: '1704067200000',
+    paidAt: '2024-01-01',
+    syncedAt: '2024-01-01T10:00:00Z',
     orderItems: [
       {
         vendorItemId: 111,
         productName: '테스트 상품 A',
         salesQuantity: 2,
-        unitSalesPrice: 10000,
-        currency: 'KRW',
+        unitPrice: 10000,
+        salesPrice: 10000,
       },
     ],
   },
   {
     orderId: 67890,
-    vendorId: 'A01407257',
-    paidAt: '1704153600000',
+    paidAt: '2024-01-02',
+    syncedAt: '2024-01-02T10:00:00Z',
     orderItems: [
       {
         vendorItemId: 222,
         productName: '테스트 상품 B',
         salesQuantity: 1,
+        unitPrice: 20000,
         salesPrice: 20000,
-        currency: 'KRW',
       },
     ],
   },
@@ -76,7 +77,7 @@ describe('OrdersPage', () => {
 
   it('TC017: displays orders when loaded', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
-      data: { data: mockOrders },
+      data: { data: mockOrders, total: 2, lastSyncedAt: '2024-01-02T10:00:00Z' },
     });
 
     renderWithQuery(<OrdersPage />);
@@ -89,7 +90,7 @@ describe('OrdersPage', () => {
 
   it('TC018: displays total sales amount', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
-      data: { data: mockOrders },
+      data: { data: mockOrders, total: 2, lastSyncedAt: '2024-01-02T10:00:00Z' },
     });
 
     renderWithQuery(<OrdersPage />);
@@ -103,7 +104,7 @@ describe('OrdersPage', () => {
   it('TC019: filters orders by order ID', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.get).mockResolvedValue({
-      data: { data: mockOrders },
+      data: { data: mockOrders, total: 2, lastSyncedAt: '2024-01-02T10:00:00Z' },
     });
 
     renderWithQuery(<OrdersPage />);
@@ -129,7 +130,7 @@ describe('OrdersPage', () => {
   it('TC020: changes date range', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.get).mockResolvedValue({
-      data: { data: [] },
+      data: { data: [], total: 0, lastSyncedAt: '' },
     });
 
     renderWithQuery(<OrdersPage />);
@@ -145,7 +146,7 @@ describe('OrdersPage', () => {
 
   it('TC021: shows empty state when no orders', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
-      data: { data: [] },
+      data: { data: [], total: 0, lastSyncedAt: '' },
     });
 
     renderWithQuery(<OrdersPage />);

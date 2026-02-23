@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -20,37 +18,6 @@ import (
 )
 
 var cfg *config.Config
-
-// itemMapCache: 상품명 매핑 정보를 서버 메모리에 캐시 (Products+Orders API 호출 최소화)
-type itemMapCache struct {
-	mu        sync.RWMutex
-	data      map[int64]ItemInfo
-	expiresAt time.Time
-}
-
-type ItemInfo struct {
-	ProductName string
-	ItemName    string
-	StatusName  string
-}
-
-var globalItemCache = &itemMapCache{}
-
-func (c *itemMapCache) get() (map[int64]ItemInfo, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.data == nil || time.Now().After(c.expiresAt) {
-		return nil, false
-	}
-	return c.data, true
-}
-
-func (c *itemMapCache) set(data map[int64]ItemInfo) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.data = data
-	c.expiresAt = time.Now().Add(10 * time.Minute)
-}
 
 func main() {
 	cfg = config.Load()
@@ -78,10 +45,23 @@ func main() {
 	api.PUT("/profile", handlers.UpdateProfile)
 	api.PUT("/profile/password", handlers.ChangePassword)
 
-	api.GET("/coupang/products", getProductsProtected)
-	api.GET("/coupang/orders", getOrdersProtected)
-	api.GET("/coupang/inventory", getInventoryProtected)
-	api.GET("/coupang/returns", getReturnsProtected)
+	// DB 조회 (동기화된 데이터 반환)
+	api.GET("/coupang/products", getProductsFromDB)
+	api.GET("/coupang/products/:productId/items", getProductItemsFromDB)
+	api.GET("/coupang/inventory", getInventoryFromDB)
+	api.GET("/coupang/orders", getOrdersFromDB)
+	api.GET("/coupang/returns", getReturnsFromDB)
+
+	// 동기화 (쿠팡 API 호출 → DB 저장)
+	api.POST("/coupang/sync/products", syncProducts)
+	api.POST("/coupang/sync/inventory", syncInventory)
+	api.POST("/coupang/sync/orders", syncOrders)
+	api.POST("/coupang/sync/returns", syncReturns)
+
+	// 동기화 상태 조회
+	api.GET("/coupang/sync/status", getSyncStatus)
+
+	// 테스트
 	api.GET("/coupang/test", testCoupangAPI)
 
 	port := fmt.Sprintf(":%s", cfg.ServerPort)
@@ -103,119 +83,160 @@ func testCoupangAPI(c echo.Context) error {
 	})
 }
 
-func getProductsProtected(c echo.Context) error {
-	user := c.Get("user").(*middleware.UserContext)
-	client := coupang.NewClient(user.VendorID, user.AccessKey, user.SecretKey)
+// ─── 헬퍼: sync_status 조회/갱신 ──────────────────────────────────────────
 
-	data, err := client.GetProducts()
+// getLastSyncedAt: 마지막 동기화 시각 반환 (없으면 빈 문자열)
+func getLastSyncedAt(userID int64, dataType string) string {
+	var lastSynced string
+	err := database.DB.QueryRow(
+		"SELECT COALESCE(last_synced_at, '') FROM sync_status WHERE user_id = ? AND data_type = ?",
+		userID, dataType,
+	).Scan(&lastSynced)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return ""
 	}
-	return c.JSONBlob(http.StatusOK, data)
+	return lastSynced
 }
 
-func getOrdersProtected(c echo.Context) error {
-	user := c.Get("user").(*middleware.UserContext)
-	client := coupang.NewClient(user.VendorID, user.AccessKey, user.SecretKey)
-
-	createdAtFrom := c.QueryParam("createdAtFrom")
-	createdAtTo := c.QueryParam("createdAtTo")
-
-	if createdAtFrom == "" || createdAtTo == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "createdAtFrom and createdAtTo query parameters are required",
-		})
-	}
-
-	data, err := client.GetOrders(createdAtFrom, createdAtTo)
-	if err != nil {
-		c.Logger().Errorf("GetOrders failed: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-	return c.JSONBlob(http.StatusOK, data)
+// upsertSyncStatus: 동기화 상태 저장 (INSERT OR REPLACE)
+func upsertSyncStatus(userID int64, dataType string, count int) {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	database.DB.Exec(`
+		INSERT INTO sync_status (user_id, data_type, last_synced_at, record_count)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(user_id, data_type) DO UPDATE SET
+			last_synced_at = excluded.last_synced_at,
+			record_count = excluded.record_count
+	`, userID, dataType, now, count)
 }
 
-// buildItemMap: Products + Orders API로 vendorItemId→상품명 매핑 생성 (캐시 우선)
-func buildItemMap(client *coupang.Client) (map[int64]ItemInfo, error) {
-	if cached, ok := globalItemCache.get(); ok {
-		return cached, nil
-	}
+// ─── DB 조회 핸들러 ────────────────────────────────────────────────────────
 
-	type RgItemData struct {
-		VendorItemId int64 `json:"vendorItemId"`
-	}
-	type ProductItem struct {
-		ItemName             string      `json:"itemName"`
-		RocketGrowthItemData *RgItemData `json:"rocketGrowthItemData"`
-	}
+// getProductsFromDB: DB에서 상품 목록 반환
+func getProductsFromDB(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+
 	type Product struct {
-		SellerProductName string        `json:"sellerProductName"`
-		StatusName        string        `json:"statusName"`
-		Items             []ProductItem `json:"items"`
-	}
-	type ProductsResp struct {
-		Code string    `json:"code"`
-		Data []Product `json:"data"`
+		ID                 int64  `json:"id"`
+		SellerProductID    int64  `json:"sellerProductId"`
+		SellerProductName  string `json:"sellerProductName"`
+		Brand              string `json:"brand"`
+		StatusName         string `json:"statusName"`
+		SaleStartedAt      string `json:"saleStartedAt"`
+		SaleEndedAt        string `json:"saleEndedAt"`
+		DisplayCategoryCode int64  `json:"displayCategoryCode"`
+		CategoryID         int64  `json:"categoryId"`
+		RegistrationType   string `json:"registrationType"`
+		SyncedAt           string `json:"syncedAt"`
 	}
 
-	itemMap := make(map[int64]ItemInfo)
+	rows, err := database.DB.Query(`
+		SELECT id, seller_product_id, seller_product_name, brand, status_name,
+		       sale_started_at, sale_ended_at, display_category_code, category_id,
+		       registration_type, synced_at
+		FROM products
+		WHERE user_id = ?
+		ORDER BY seller_product_id DESC
+	`, user.UserID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
+	}
+	defer rows.Close()
 
-	productsData, err := client.GetProducts()
-	if err == nil {
-		var productsResp ProductsResp
-		if json.Unmarshal(productsData, &productsResp) == nil {
-			for _, p := range productsResp.Data {
-				for _, it := range p.Items {
-					if it.RocketGrowthItemData != nil && it.RocketGrowthItemData.VendorItemId != 0 {
-						itemMap[it.RocketGrowthItemData.VendorItemId] = ItemInfo{
-							ProductName: p.SellerProductName,
-							ItemName:    it.ItemName,
-							StatusName:  p.StatusName,
-						}
-					}
-				}
-			}
+	var products []Product
+	for rows.Next() {
+		var p Product
+		if err := rows.Scan(&p.ID, &p.SellerProductID, &p.SellerProductName, &p.Brand,
+			&p.StatusName, &p.SaleStartedAt, &p.SaleEndedAt, &p.DisplayCategoryCode,
+			&p.CategoryID, &p.RegistrationType, &p.SyncedAt); err != nil {
+			continue
 		}
+		products = append(products, p)
+	}
+	if products == nil {
+		products = []Product{}
 	}
 
-	// Orders API로 미매핑 상품 보완 (최근 3개월)
-	now := time.Now()
-	ordersTo := now.Format("2006-01-02")
-	ordersFrom := now.AddDate(0, -3, 0).Format("2006-01-02")
-	ordersData, err := client.GetOrders(ordersFrom, ordersTo)
-	if err == nil {
-		type OItem struct {
-			VendorItemId int64  `json:"vendorItemId"`
-			ProductName  string `json:"productName"`
-		}
-		type OOrder struct{ OrderItems []OItem `json:"orderItems"` }
-		type OResp struct{ Data []OOrder `json:"data"` }
-		var oResp OResp
-		if json.Unmarshal(ordersData, &oResp) == nil {
-			for _, order := range oResp.Data {
-				for _, oi := range order.OrderItems {
-					if oi.VendorItemId != 0 && oi.ProductName != "" {
-						if _, exists := itemMap[oi.VendorItemId]; !exists {
-							itemMap[oi.VendorItemId] = ItemInfo{
-								ProductName: oi.ProductName,
-								StatusName:  "판매이력",
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	globalItemCache.set(itemMap)
-	return itemMap, nil
+	lastSynced := getLastSyncedAt(user.UserID, "products")
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"code":          "SUCCESS",
+		"data":          products,
+		"total":         len(products),
+		"lastSyncedAt":  lastSynced,
+	})
 }
 
-func getInventoryProtected(c echo.Context) error {
+// getProductItemsFromDB: DB에서 특정 상품의 옵션 목록 반환
+func getProductItemsFromDB(c echo.Context) error {
 	user := c.Get("user").(*middleware.UserContext)
-	client := coupang.NewClient(user.VendorID, user.AccessKey, user.SecretKey)
+	productIdStr := c.Param("productId")
+	productId, err := strconv.ParseInt(productIdStr, 10, 64)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid productId"})
+	}
 
-	// 페이지 파라미터 파싱 (기본: page=1, pageSize=20)
+	type ProductItem struct {
+		ItemID               int64   `json:"itemId"`
+		ItemName             string  `json:"itemName"`
+		SellerProductItemName string `json:"sellerProductItemName"`
+		ExternalVendorSku    string  `json:"externalVendorSku"`
+		OriginalPrice        float64 `json:"originalPrice"`
+		SalePrice            float64 `json:"salePrice"`
+		StatusName           string  `json:"statusName"`
+		VendorItemID         int64   `json:"vendorItemId"`
+	}
+
+	// 상품 기본 정보 조회
+	var productName, brand, statusName string
+	err = database.DB.QueryRow(`
+		SELECT seller_product_name, brand, status_name
+		FROM products
+		WHERE user_id = ? AND seller_product_id = ?
+	`, user.UserID, productId).Scan(&productName, &brand, &statusName)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "상품을 찾을 수 없습니다"})
+	}
+
+	rows, err := database.DB.Query(`
+		SELECT item_id, item_name, seller_product_item_name, external_vendor_sku,
+		       original_price, sale_price, status_name, vendor_item_id
+		FROM product_items
+		WHERE user_id = ? AND seller_product_id = ?
+		ORDER BY item_id ASC
+	`, user.UserID, productId)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
+	}
+	defer rows.Close()
+
+	var items []ProductItem
+	for rows.Next() {
+		var it ProductItem
+		if err := rows.Scan(&it.ItemID, &it.ItemName, &it.SellerProductItemName,
+			&it.ExternalVendorSku, &it.OriginalPrice, &it.SalePrice,
+			&it.StatusName, &it.VendorItemID); err != nil {
+			continue
+		}
+		items = append(items, it)
+	}
+	if items == nil {
+		items = []ProductItem{}
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"code":              "SUCCESS",
+		"sellerProductId":   productId,
+		"sellerProductName": productName,
+		"statusName":        statusName,
+		"brand":             brand,
+		"items":             items,
+	})
+}
+
+// getInventoryFromDB: DB에서 재고 목록 반환 (페이지네이션 지원)
+func getInventoryFromDB(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+
 	page, _ := strconv.Atoi(c.QueryParam("page"))
 	pageSize, _ := strconv.Atoi(c.QueryParam("pageSize"))
 	if page < 1 {
@@ -225,23 +246,351 @@ func getInventoryProtected(c echo.Context) error {
 		pageSize = 20
 	}
 
-	// 1) 상품명 매핑 (캐시 사용)
-	itemMap, err := buildItemMap(client)
-	if err != nil {
-		c.Logger().Errorf("buildItemMap failed: %v", err)
-		// 매핑 실패해도 계속 진행 (빈 맵으로 처리)
-		itemMap = make(map[int64]ItemInfo)
+	type InventoryItem struct {
+		VendorItemID    int64  `json:"vendorItemId"`
+		ProductName     string `json:"productName"`
+		ItemName        string `json:"itemName"`
+		StatusName      string `json:"statusName"`
+		StockQuantity   int    `json:"stockQuantity"`
+		SalesLast30Days int    `json:"salesLast30Days"`
+		IsMapped        bool   `json:"isMapped"`
+		SyncedAt        string `json:"syncedAt"`
 	}
 
-	// 2) Inventory Summaries 전체 조회 (nextToken 페이지네이션)
-	invRawItems, err := client.GetInventorySummaries()
+	// 전체 건수
+	var totalCount int
+	database.DB.QueryRow("SELECT COUNT(*) FROM inventory WHERE user_id = ?", user.UserID).Scan(&totalCount)
+
+	rows, err := database.DB.Query(`
+		SELECT vendor_item_id, product_name, item_name, status_name,
+		       stock_quantity, sales_last_30_days, is_mapped, synced_at
+		FROM inventory
+		WHERE user_id = ?
+		ORDER BY vendor_item_id DESC
+		LIMIT ? OFFSET ?
+	`, user.UserID, pageSize, (page-1)*pageSize)
 	if err != nil {
-		c.Logger().Errorf("GetInventorySummaries failed: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
+	}
+	defer rows.Close()
+
+	var items []InventoryItem
+	for rows.Next() {
+		var it InventoryItem
+		var isMapped int
+		if err := rows.Scan(&it.VendorItemID, &it.ProductName, &it.ItemName,
+			&it.StatusName, &it.StockQuantity, &it.SalesLast30Days,
+			&isMapped, &it.SyncedAt); err != nil {
+			continue
+		}
+		it.IsMapped = isMapped == 1
+		items = append(items, it)
+	}
+	if items == nil {
+		items = []InventoryItem{}
+	}
+
+	totalPages := (totalCount + pageSize - 1) / pageSize
+	lastSynced := getLastSyncedAt(user.UserID, "inventory")
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"code":         "SUCCESS",
+		"data":         items,
+		"total":        totalCount,
+		"page":         page,
+		"pageSize":     pageSize,
+		"totalPages":   totalPages,
+		"lastSyncedAt": lastSynced,
+	})
+}
+
+// getOrdersFromDB: DB에서 주문 목록 반환
+func getOrdersFromDB(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+
+	createdAtFrom := c.QueryParam("createdAtFrom")
+	createdAtTo := c.QueryParam("createdAtTo")
+
+	type OrderItem struct {
+		VendorItemID  int64   `json:"vendorItemId"`
+		ProductName   string  `json:"productName"`
+		SalesQuantity int     `json:"salesQuantity"`
+		UnitPrice     float64 `json:"unitPrice"`
+		SalesPrice    float64 `json:"salesPrice"`
+	}
+	type Order struct {
+		OrderID   int64       `json:"orderId"`
+		PaidAt    string      `json:"paidAt"`
+		SyncedAt  string      `json:"syncedAt"`
+		OrderItems []OrderItem `json:"orderItems"`
+	}
+
+	query := "SELECT order_id, paid_at, synced_at FROM orders WHERE user_id = ?"
+	args := []interface{}{user.UserID}
+
+	if createdAtFrom != "" {
+		query += " AND paid_at >= ?"
+		args = append(args, createdAtFrom)
+	}
+	if createdAtTo != "" {
+		query += " AND paid_at <= ?"
+		args = append(args, createdAtTo)
+	}
+	query += " ORDER BY paid_at DESC"
+
+	rows, err := database.DB.Query(query, args...)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
+	}
+	defer rows.Close()
+
+	var orders []Order
+	for rows.Next() {
+		var o Order
+		if err := rows.Scan(&o.OrderID, &o.PaidAt, &o.SyncedAt); err != nil {
+			continue
+		}
+
+		// 주문 아이템 조회
+		itemRows, err := database.DB.Query(`
+			SELECT vendor_item_id, product_name, sales_quantity, unit_price, sales_price
+			FROM order_items
+			WHERE user_id = ? AND order_id = ?
+		`, user.UserID, o.OrderID)
+		if err == nil {
+			for itemRows.Next() {
+				var oi OrderItem
+				if err := itemRows.Scan(&oi.VendorItemID, &oi.ProductName,
+					&oi.SalesQuantity, &oi.UnitPrice, &oi.SalesPrice); err == nil {
+					o.OrderItems = append(o.OrderItems, oi)
+				}
+			}
+			itemRows.Close()
+		}
+		if o.OrderItems == nil {
+			o.OrderItems = []OrderItem{}
+		}
+		orders = append(orders, o)
+	}
+	if orders == nil {
+		orders = []Order{}
+	}
+
+	lastSynced := getLastSyncedAt(user.UserID, "orders")
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"code":         "SUCCESS",
+		"data":         orders,
+		"total":        len(orders),
+		"lastSyncedAt": lastSynced,
+	})
+}
+
+// getReturnsFromDB: DB에서 반품 목록 반환
+func getReturnsFromDB(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+
+	createdAtFrom := c.QueryParam("createdAtFrom")
+	createdAtTo := c.QueryParam("createdAtTo")
+	status := c.QueryParam("status")
+
+	type ReturnItem struct {
+		ReceiptID       int64  `json:"receiptId"`
+		OrderID         int64  `json:"orderId"`
+		Status          string `json:"status"`
+		StatusName      string `json:"statusName"`
+		ProductName     string `json:"productName"`
+		VendorItemID    int64  `json:"vendorItemId"`
+		ReturnCount     int    `json:"returnCount"`
+		SalesQuantity   int    `json:"salesQuantity"`
+		ReturnReason    string `json:"returnReason"`
+		ReturnReasonCode string `json:"returnReasonCode"`
+		CreatedAtAPI    string `json:"createdAtApi"`
+		CancelledAt     string `json:"cancelledAt"`
+		ReturnedAt      string `json:"returnedAt"`
+		SyncedAt        string `json:"syncedAt"`
+	}
+
+	query := "SELECT receipt_id, order_id, status, status_name, product_name, vendor_item_id, return_count, sales_quantity, return_reason, return_reason_code, created_at_api, cancelled_at, returned_at, synced_at FROM returns WHERE user_id = ?"
+	args := []interface{}{user.UserID}
+
+	if createdAtFrom != "" {
+		query += " AND created_at_api >= ?"
+		args = append(args, createdAtFrom)
+	}
+	if createdAtTo != "" {
+		query += " AND created_at_api <= ?"
+		args = append(args, createdAtTo)
+	}
+	if status != "" {
+		query += " AND status = ?"
+		args = append(args, status)
+	}
+	query += " ORDER BY created_at_api DESC"
+
+	rows, err := database.DB.Query(query, args...)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
+	}
+	defer rows.Close()
+
+	var returns []ReturnItem
+	for rows.Next() {
+		var r ReturnItem
+		if err := rows.Scan(&r.ReceiptID, &r.OrderID, &r.Status, &r.StatusName,
+			&r.ProductName, &r.VendorItemID, &r.ReturnCount, &r.SalesQuantity,
+			&r.ReturnReason, &r.ReturnReasonCode, &r.CreatedAtAPI,
+			&r.CancelledAt, &r.ReturnedAt, &r.SyncedAt); err != nil {
+			continue
+		}
+		returns = append(returns, r)
+	}
+	if returns == nil {
+		returns = []ReturnItem{}
+	}
+
+	lastSynced := getLastSyncedAt(user.UserID, "returns")
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"code":         "SUCCESS",
+		"data":         returns,
+		"total":        len(returns),
+		"lastSyncedAt": lastSynced,
+	})
+}
+
+// ─── 동기화 핸들러 (쿠팡 API → DB 저장) ───────────────────────────────────
+
+// syncProducts: 쿠팡 상품 API 호출 → products + product_items 테이블 저장
+func syncProducts(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+	client := coupang.NewClient(user.VendorID, user.AccessKey, user.SecretKey)
+
+	data, err := client.GetProducts()
+	if err != nil {
+		c.Logger().Errorf("syncProducts GetProducts failed: %v", err)
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "429") {
 			return c.JSON(http.StatusTooManyRequests, map[string]string{"error": "쿠팡 API 요청 한도 초과. 잠시 후 다시 시도해주세요."})
 		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch inventory"})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	type RgItemData struct {
+		VendorItemId int64 `json:"vendorItemId"`
+	}
+	type ProductItem struct {
+		ItemId               int64       `json:"itemId"`
+		ItemName             string      `json:"itemName"`
+		SellerProductItemName string     `json:"sellerProductItemName"`
+		ExternalVendorSku    string      `json:"externalVendorSku"`
+		OriginalPrice        float64     `json:"originalPrice"`
+		SalePrice            float64     `json:"salePrice"`
+		StatusName           string      `json:"statusName"`
+		RocketGrowthItemData *RgItemData `json:"rocketGrowthItemData"`
+	}
+	type Product struct {
+		SellerProductId     int64         `json:"sellerProductId"`
+		SellerProductName   string        `json:"sellerProductName"`
+		Brand               string        `json:"brand"`
+		StatusName          string        `json:"statusName"`
+		SaleStartedAt       string        `json:"saleStartedAt"`
+		SaleEndedAt         string        `json:"saleEndedAt"`
+		DisplayCategoryCode int64         `json:"displayCategoryCode"`
+		CategoryId          int64         `json:"categoryId"`
+		RegistrationType    string        `json:"registrationType"`
+		Items               []ProductItem `json:"items"`
+	}
+	type ProductsResp struct {
+		Code string    `json:"code"`
+		Data []Product `json:"data"`
+	}
+
+	var productsResp ProductsResp
+	if err := json.Unmarshal(data, &productsResp); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "응답 파싱 실패"})
+	}
+
+	productCount := 0
+	itemCount := 0
+
+	for _, p := range productsResp.Data {
+		// products 테이블 upsert
+		_, err := database.DB.Exec(`
+			INSERT INTO products (user_id, seller_product_id, seller_product_name, brand, status_name,
+				sale_started_at, sale_ended_at, display_category_code, category_id, registration_type, synced_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(user_id, seller_product_id) DO UPDATE SET
+				seller_product_name = excluded.seller_product_name,
+				brand = excluded.brand,
+				status_name = excluded.status_name,
+				sale_started_at = excluded.sale_started_at,
+				sale_ended_at = excluded.sale_ended_at,
+				display_category_code = excluded.display_category_code,
+				category_id = excluded.category_id,
+				registration_type = excluded.registration_type,
+				synced_at = CURRENT_TIMESTAMP
+		`, user.UserID, p.SellerProductId, p.SellerProductName, p.Brand, p.StatusName,
+			p.SaleStartedAt, p.SaleEndedAt, p.DisplayCategoryCode, p.CategoryId, p.RegistrationType)
+		if err != nil {
+			c.Logger().Errorf("products upsert failed: %v", err)
+			continue
+		}
+		productCount++
+
+		// product_items 테이블 upsert
+		for _, it := range p.Items {
+			vendorItemId := int64(0)
+			if it.RocketGrowthItemData != nil {
+				vendorItemId = it.RocketGrowthItemData.VendorItemId
+			}
+			_, err := database.DB.Exec(`
+				INSERT INTO product_items (user_id, seller_product_id, item_id, item_name,
+					seller_product_item_name, external_vendor_sku, original_price, sale_price,
+					status_name, vendor_item_id, synced_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+				ON CONFLICT(user_id, item_id) DO UPDATE SET
+					item_name = excluded.item_name,
+					seller_product_item_name = excluded.seller_product_item_name,
+					external_vendor_sku = excluded.external_vendor_sku,
+					original_price = excluded.original_price,
+					sale_price = excluded.sale_price,
+					status_name = excluded.status_name,
+					vendor_item_id = excluded.vendor_item_id,
+					synced_at = CURRENT_TIMESTAMP
+			`, user.UserID, p.SellerProductId, it.ItemId, it.ItemName,
+				it.SellerProductItemName, it.ExternalVendorSku, it.OriginalPrice, it.SalePrice,
+				it.StatusName, vendorItemId)
+			if err != nil {
+				c.Logger().Errorf("product_items upsert failed: %v", err)
+				continue
+			}
+			itemCount++
+		}
+	}
+
+	upsertSyncStatus(user.UserID, "products", productCount)
+
+	syncedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"code":         "SUCCESS",
+		"productCount": productCount,
+		"itemCount":    itemCount,
+		"syncedAt":     syncedAt,
+	})
+}
+
+// syncInventory: 쿠팡 재고 API 호출 → inventory 테이블 저장
+func syncInventory(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+	client := coupang.NewClient(user.VendorID, user.AccessKey, user.SecretKey)
+
+	invRawItems, err := client.GetInventorySummaries()
+	if err != nil {
+		c.Logger().Errorf("syncInventory GetInventorySummaries failed: %v", err)
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "429") {
+			return c.JSON(http.StatusTooManyRequests, map[string]string{"error": "쿠팡 API 요청 한도 초과. 잠시 후 다시 시도해주세요."})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
 	type SalesCountMap struct {
@@ -255,120 +604,325 @@ func getInventoryProtected(c echo.Context) error {
 		SalesCountMap    SalesCountMap    `json:"salesCountMap"`
 		InventoryDetails InventoryDetails `json:"inventoryDetails"`
 	}
-	type InventoryItem struct {
-		VendorItemId    int64  `json:"vendorItemId"`
-		ProductName     string `json:"productName"`
-		ItemName        string `json:"itemName"`
-		StatusName      string `json:"statusName"`
-		StockQuantity   int    `json:"stockQuantity"`
-		SalesLast30Days int    `json:"salesLast30Days"`
-		IsMapped        bool   `json:"isMapped"`
+
+	// product_items에서 vendorItemId → 상품명/아이템명 매핑
+	type ItemInfo struct {
+		ProductName string
+		ItemName    string
+		StatusName  string
+	}
+	itemMap := make(map[int64]ItemInfo)
+	rows, err := database.DB.Query(`
+		SELECT pi.vendor_item_id, p.seller_product_name, pi.item_name, pi.status_name
+		FROM product_items pi
+		JOIN products p ON p.user_id = pi.user_id AND p.seller_product_id = pi.seller_product_id
+		WHERE pi.user_id = ? AND pi.vendor_item_id > 0
+	`, user.UserID)
+	if err == nil {
+		for rows.Next() {
+			var vid int64
+			var pname, iname, sname string
+			if rows.Scan(&vid, &pname, &iname, &sname) == nil {
+				itemMap[vid] = ItemInfo{ProductName: pname, ItemName: iname, StatusName: sname}
+			}
+		}
+		rows.Close()
 	}
 
-	// 전체 아이템 조립
-	var allItems []InventoryItem
+	count := 0
 	for _, raw := range invRawItems {
 		var inv InvSummaryItem
 		if err := json.Unmarshal(raw, &inv); err != nil {
 			continue
 		}
+
 		info, mapped := itemMap[inv.VendorItemId]
-		allItems = append(allItems, InventoryItem{
-			VendorItemId:    inv.VendorItemId,
-			ProductName:     info.ProductName,
-			ItemName:        info.ItemName,
-			StatusName:      info.StatusName,
-			StockQuantity:   inv.InventoryDetails.TotalOrderableQuantity,
-			SalesLast30Days: inv.SalesCountMap.Last30Days,
-			IsMapped:        mapped,
-		})
+		isMapped := 0
+		if mapped {
+			isMapped = 1
+		}
+
+		_, err := database.DB.Exec(`
+			INSERT INTO inventory (user_id, vendor_item_id, product_name, item_name, status_name,
+				stock_quantity, sales_last_30_days, is_mapped, synced_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(user_id, vendor_item_id) DO UPDATE SET
+				product_name = excluded.product_name,
+				item_name = excluded.item_name,
+				status_name = excluded.status_name,
+				stock_quantity = excluded.stock_quantity,
+				sales_last_30_days = excluded.sales_last_30_days,
+				is_mapped = excluded.is_mapped,
+				synced_at = CURRENT_TIMESTAMP
+		`, user.UserID, inv.VendorItemId, info.ProductName, info.ItemName, info.StatusName,
+			inv.InventoryDetails.TotalOrderableQuantity, inv.SalesCountMap.Last30Days, isMapped)
+		if err != nil {
+			c.Logger().Errorf("inventory upsert failed: %v", err)
+			continue
+		}
+		count++
 	}
 
-	// vendorItemId 오름차순 정렬
-	sort.Slice(allItems, func(i, j int) bool {
-		return allItems[i].VendorItemId > allItems[j].VendorItemId
-	})
+	upsertSyncStatus(user.UserID, "inventory", count)
 
-	totalCount := len(allItems)
-	totalPages := (totalCount + pageSize - 1) / pageSize
-
-	// 페이지 슬라이싱
-	start := (page - 1) * pageSize
-	end := start + pageSize
-	if start >= totalCount {
-		start = totalCount
-	}
-	if end > totalCount {
-		end = totalCount
-	}
-	pageItems := allItems[start:end]
-
-	c.Logger().Infof("Inventory: page=%d/%d, items=%d/%d", page, totalPages, len(pageItems), totalCount)
-
+	syncedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"code":       "SUCCESS",
-		"message":    "",
-		"data":       pageItems,
-		"total":      totalCount,
-		"page":       page,
-		"pageSize":   pageSize,
-		"totalPages": totalPages,
+		"code":     "SUCCESS",
+		"count":    count,
+		"syncedAt": syncedAt,
 	})
 }
 
-
-// getReturnsProtected: 반품/취소 요청 목록 조회
-// Query params: createdAtFrom, createdAtTo (YYYY-MM-DDTHH:MM), status (UC/RU/CC/PR, 기본 전체)
-func getReturnsProtected(c echo.Context) error {
+// syncOrders: 쿠팡 주문 API 호출 → orders + order_items 테이블 저장
+// 마지막 동기화 이후 시점부터 현재까지 자동 계산
+func syncOrders(c echo.Context) error {
 	user := c.Get("user").(*middleware.UserContext)
 	client := coupang.NewClient(user.VendorID, user.AccessKey, user.SecretKey)
 
-	// 기본값: 최근 7일
 	now := time.Now()
-	from := c.QueryParam("createdAtFrom")
-	to := c.QueryParam("createdAtTo")
-	status := c.QueryParam("status")
+	toStr := now.Format("2006-01-02")
 
-	if from == "" {
-		from = now.AddDate(0, 0, -7).Format("2006-01-02T00:00")
+	// 마지막 동기화 시각 기반으로 from 계산
+	lastSynced := getLastSyncedAt(user.UserID, "orders")
+	var fromStr string
+	if lastSynced != "" {
+		// ISO8601 형식 파싱 (예: "2025-01-15T10:30:00Z")
+		t, err := time.Parse("2006-01-02T15:04:05Z", lastSynced)
+		if err != nil {
+			t, err = time.Parse("2006-01-02T15:04:05", lastSynced)
+		}
+		if err == nil {
+			fromStr = t.Format("2006-01-02")
+		}
 	}
-	if to == "" {
-		to = now.Format("2006-01-02T15:04")
+	if fromStr == "" {
+		// 최초 동기화: 90일치
+		fromStr = now.AddDate(0, 0, -90).Format("2006-01-02")
 	}
 
-	path := fmt.Sprintf("/v2/providers/openapi/apis/api/v6/vendors/%s/returnRequests", user.VendorID)
-	query := fmt.Sprintf("searchType=timeFrame&createdAtFrom=%s&createdAtTo=%s", from, to)
-	if status != "" {
-		query += "&status=" + status
-	}
-
-	body, err := client.Request("GET", path, query)
+	data, err := client.GetOrders(fromStr, toStr)
 	if err != nil {
+		c.Logger().Errorf("syncOrders GetOrders failed: %v", err)
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "429") {
+			return c.JSON(http.StatusTooManyRequests, map[string]string{"error": "쿠팡 API 요청 한도 초과. 잠시 후 다시 시도해주세요."})
+		}
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "parse error"})
+	type OrderItem struct {
+		VendorItemId  int64   `json:"vendorItemId"`
+		ProductName   string  `json:"productName"`
+		SalesQuantity int     `json:"salesQuantity"`
+		UnitPrice     float64 `json:"unitPrice"`
+		SalesPrice    float64 `json:"salesPrice"`
+	}
+	type Order struct {
+		OrderId   int64       `json:"orderId"`
+		PaidAt    string      `json:"paidAt"`
+		OrderItems []OrderItem `json:"orderItems"`
+	}
+	type OrdersResp struct {
+		Code string  `json:"code"`
+		Data []Order `json:"data"`
 	}
 
-	// data 배열 추출
-	data := result["data"]
-	if data == nil {
-		data = []interface{}{}
+	var ordersResp OrdersResp
+	if err := json.Unmarshal(data, &ordersResp); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "응답 파싱 실패"})
 	}
 
-	dataSlice, ok := data.([]interface{})
-	if !ok {
-		dataSlice = []interface{}{}
+	orderCount := 0
+	for _, o := range ordersResp.Data {
+		// orders 테이블 upsert
+		_, err := database.DB.Exec(`
+			INSERT INTO orders (user_id, order_id, paid_at, synced_at)
+			VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(user_id, order_id) DO UPDATE SET
+				paid_at = excluded.paid_at,
+				synced_at = CURRENT_TIMESTAMP
+		`, user.UserID, o.OrderId, o.PaidAt)
+		if err != nil {
+			c.Logger().Errorf("orders upsert failed: %v", err)
+			continue
+		}
+
+		// 기존 order_items 삭제 후 재삽입
+		database.DB.Exec("DELETE FROM order_items WHERE user_id = ? AND order_id = ?", user.UserID, o.OrderId)
+		for _, oi := range o.OrderItems {
+			database.DB.Exec(`
+				INSERT INTO order_items (user_id, order_id, vendor_item_id, product_name, sales_quantity, unit_price, sales_price)
+				VALUES (?, ?, ?, ?, ?, ?, ?)
+			`, user.UserID, o.OrderId, oi.VendorItemId, oi.ProductName, oi.SalesQuantity, oi.UnitPrice, oi.SalesPrice)
+		}
+		orderCount++
+	}
+
+	upsertSyncStatus(user.UserID, "orders", orderCount)
+
+	syncedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"code":      "SUCCESS",
+		"count":     orderCount,
+		"syncedAt":  syncedAt,
+		"fromDate":  fromStr,
+		"toDate":    toStr,
+	})
+}
+
+// syncReturns: 쿠팡 반품 API 호출 → returns 테이블 저장
+// 마지막 동기화 이후 시점부터 현재까지 자동 계산
+func syncReturns(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+	client := coupang.NewClient(user.VendorID, user.AccessKey, user.SecretKey)
+
+	now := time.Now()
+	toStr := now.Format("2006-01-02T15:04")
+
+	// 마지막 동기화 시각 기반으로 from 계산
+	lastSynced := getLastSyncedAt(user.UserID, "returns")
+	var fromStr string
+	if lastSynced != "" {
+		t, err := time.Parse("2006-01-02T15:04:05Z", lastSynced)
+		if err != nil {
+			t, err = time.Parse("2006-01-02T15:04:05", lastSynced)
+		}
+		if err == nil {
+			fromStr = t.Format("2006-01-02T15:04")
+		}
+	}
+	if fromStr == "" {
+		// 최초 동기화: 90일치
+		fromStr = now.AddDate(0, 0, -90).Format("2006-01-02T00:00")
+	}
+
+	path := fmt.Sprintf("/v2/providers/openapi/apis/api/v6/vendors/%s/returnRequests", user.VendorID)
+	query := fmt.Sprintf("searchType=timeFrame&createdAtFrom=%s&createdAtTo=%s", fromStr, toStr)
+
+	body, err := client.Request("GET", path, query)
+	if err != nil {
+		c.Logger().Errorf("syncReturns API failed: %v", err)
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "429") {
+			return c.JSON(http.StatusTooManyRequests, map[string]string{"error": "쿠팡 API 요청 한도 초과. 잠시 후 다시 시도해주세요."})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	type ReturnItem struct {
+		ReceiptId       int64  `json:"receiptId"`
+		OrderId         int64  `json:"orderId"`
+		Status          string `json:"status"`
+		StatusName      string `json:"statusName"`
+		ProductName     string `json:"productName"`
+		VendorItemId    int64  `json:"vendorItemId"`
+		ReturnCount     int    `json:"returnCount"`
+		SalesQuantity   int    `json:"salesQuantity"`
+		ReturnReason    string `json:"returnReason"`
+		ReturnReasonCode string `json:"returnReasonCode"`
+		CreatedAt       string `json:"createdAt"`
+		CancelledAt     string `json:"cancelledAt"`
+		ReturnedAt      string `json:"returnedAt"`
+		RawJson         string
+	}
+	type ReturnsResp struct {
+		Code string       `json:"code"`
+		Data []json.RawMessage `json:"data"`
+	}
+
+	var returnsResp ReturnsResp
+	if err := json.Unmarshal(body, &returnsResp); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "응답 파싱 실패"})
+	}
+
+	count := 0
+	for _, raw := range returnsResp.Data {
+		var r ReturnItem
+		if err := json.Unmarshal(raw, &r); err != nil {
+			continue
+		}
+		r.RawJson = string(raw)
+
+		_, err := database.DB.Exec(`
+			INSERT INTO returns (user_id, receipt_id, order_id, status, status_name, product_name,
+				vendor_item_id, return_count, sales_quantity, return_reason, return_reason_code,
+				created_at_api, cancelled_at, returned_at, raw_json, synced_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(user_id, receipt_id) DO UPDATE SET
+				status = excluded.status,
+				status_name = excluded.status_name,
+				product_name = excluded.product_name,
+				vendor_item_id = excluded.vendor_item_id,
+				return_count = excluded.return_count,
+				sales_quantity = excluded.sales_quantity,
+				return_reason = excluded.return_reason,
+				return_reason_code = excluded.return_reason_code,
+				created_at_api = excluded.created_at_api,
+				cancelled_at = excluded.cancelled_at,
+				returned_at = excluded.returned_at,
+				raw_json = excluded.raw_json,
+				synced_at = CURRENT_TIMESTAMP
+		`, user.UserID, r.ReceiptId, r.OrderId, r.Status, r.StatusName, r.ProductName,
+			r.VendorItemId, r.ReturnCount, r.SalesQuantity, r.ReturnReason, r.ReturnReasonCode,
+			r.CreatedAt, r.CancelledAt, r.ReturnedAt, r.RawJson)
+		if err != nil {
+			c.Logger().Errorf("returns upsert failed: %v", err)
+			continue
+		}
+		count++
+	}
+
+	upsertSyncStatus(user.UserID, "returns", count)
+
+	syncedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"code":      "SUCCESS",
+		"count":     count,
+		"syncedAt":  syncedAt,
+		"fromDate":  fromStr,
+		"toDate":    toStr,
+	})
+}
+
+// getSyncStatus: 모든 데이터 타입의 동기화 상태 반환
+func getSyncStatus(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+
+	type SyncInfo struct {
+		DataType      string `json:"dataType"`
+		LastSyncedAt  string `json:"lastSyncedAt"`
+		RecordCount   int    `json:"recordCount"`
+	}
+
+	rows, err := database.DB.Query(`
+		SELECT data_type, COALESCE(last_synced_at, ''), record_count
+		FROM sync_status
+		WHERE user_id = ?
+		ORDER BY data_type
+	`, user.UserID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
+	}
+	defer rows.Close()
+
+	statusMap := map[string]SyncInfo{}
+	for rows.Next() {
+		var s SyncInfo
+		if err := rows.Scan(&s.DataType, &s.LastSyncedAt, &s.RecordCount); err == nil {
+			statusMap[s.DataType] = s
+		}
+	}
+
+	// 기본값 채우기 (한번도 동기화 안 한 경우)
+	for _, dt := range []string{"products", "inventory", "orders", "returns"} {
+		if _, ok := statusMap[dt]; !ok {
+			statusMap[dt] = SyncInfo{DataType: dt, LastSyncedAt: "", RecordCount: 0}
+		}
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"code":          "SUCCESS",
-		"data":          dataSlice,
-		"total":         len(dataSlice),
-		"createdAtFrom": from,
-		"createdAtTo":   to,
-		"status":        status,
+		"code": "SUCCESS",
+		"data": statusMap,
 	})
 }
+

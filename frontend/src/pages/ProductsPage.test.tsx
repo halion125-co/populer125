@@ -15,6 +15,7 @@ vi.mock('@tanstack/react-router', () => ({
 vi.mock('../lib/api', () => ({
   apiClient: {
     get: vi.fn(),
+    post: vi.fn(),
   },
 }));
 
@@ -24,14 +25,14 @@ const mockProducts = [
     sellerProductName: '테스트 상품 1',
     statusName: '승인완료',
     brand: '테스트 브랜드',
-    createdAt: '2024-01-01',
+    syncedAt: '2024-01-01T10:00:00Z',
   },
   {
     sellerProductId: 2,
     sellerProductName: '테스트 상품 2',
     statusName: '승인대기',
     brand: '브랜드2',
-    createdAt: '2024-01-02',
+    syncedAt: '2024-01-02T10:00:00Z',
   },
 ];
 
@@ -64,7 +65,7 @@ describe('ProductsPage', () => {
 
   it('TC011: displays products when loaded', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
-      data: { data: mockProducts },
+      data: { data: mockProducts, total: 2, lastSyncedAt: '2024-01-02T10:00:00Z' },
     });
 
     renderWithQuery(<ProductsPage />);
@@ -77,7 +78,7 @@ describe('ProductsPage', () => {
 
   it('TC012: displays total product count', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
-      data: { data: mockProducts },
+      data: { data: mockProducts, total: 2, lastSyncedAt: '2024-01-02T10:00:00Z' },
     });
 
     renderWithQuery(<ProductsPage />);
@@ -92,7 +93,7 @@ describe('ProductsPage', () => {
   it('TC013: filters products by name', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.get).mockResolvedValue({
-      data: { data: mockProducts },
+      data: { data: mockProducts, total: 2, lastSyncedAt: '2024-01-02T10:00:00Z' },
     });
 
     renderWithQuery(<ProductsPage />);
@@ -128,7 +129,7 @@ describe('ProductsPage', () => {
   it('TC015: navigates back to dashboard', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.get).mockResolvedValue({
-      data: { data: [] },
+      data: { data: [], total: 0, lastSyncedAt: '' },
     });
 
     renderWithQuery(<ProductsPage />);

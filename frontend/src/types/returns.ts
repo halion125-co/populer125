@@ -23,9 +23,7 @@ export interface ReturnsResponse {
   code: string;
   data: ReturnItem[];
   total: number;
-  createdAtFrom: string;
-  createdAtTo: string;
-  status: string;
+  lastSyncedAt: string;
 }
 
 export const RETURN_STATUSES = [

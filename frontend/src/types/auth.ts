@@ -19,6 +19,15 @@ export interface UserProfile {
   vendorId: string;
   accessKey: string;
   hasSecret: boolean;
+  nameKo: string;
+  nameEn: string;
+  zipcode: string;
+  addressKo: string;
+  addressDetailKo: string;
+  addressEn: string;
+  addressDetailEn: string;
+  customsType: string;
+  customsNumber: string;
   createdAt: string;
 }
 

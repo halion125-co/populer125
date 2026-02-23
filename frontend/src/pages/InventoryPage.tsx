@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { apiClient } from '../lib/api';
 import type { InventoryItem, InventoryResponse } from '../types/inventory';
@@ -24,6 +24,7 @@ type SortOrder = 'none' | 'asc' | 'desc';
 
 const InventoryPage = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabType>('normal');
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [showFilters, setShowFilters] = useState(false);
@@ -46,9 +47,17 @@ const InventoryPage = () => {
     retry: 1,
   });
 
+  const syncMutation = useMutation({
+    mutationFn: () => apiClient.post('/api/coupang/sync/inventory'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    },
+  });
+
   const inventoryItems = apiResponse?.data || [];
   const totalPages = apiResponse?.totalPages || 1;
   const total = apiResponse?.total || 0;
+  const lastSyncedAt = apiResponse?.lastSyncedAt || '';
 
   // 탭별 아이템 분리
   const normalItems = useMemo(() => inventoryItems.filter(item => item.isMapped), [inventoryItems]);
@@ -100,34 +109,20 @@ const InventoryPage = () => {
         <div className="text-center">
           <div className="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
           <p className="text-gray-600">재고 정보를 불러오는 중...</p>
-          <p className="text-gray-400 text-sm mt-1">쿠팡 API 조회 중입니다</p>
         </div>
       </div>
     );
   }
 
   if (error) {
-    const is429 = (error as { response?: { status?: number } })?.response?.status === 429;
     return (
       <div className="min-h-screen bg-gray-100">
-        <Header onBack={() => navigate({ to: '/' })} />
+        <Header onBack={() => navigate({ to: '/' })} onSync={() => syncMutation.mutate()} isSyncing={syncMutation.isPending} lastSyncedAt={lastSyncedAt} />
         <main className="max-w-7xl mx-auto px-4 py-8">
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
-            {is429 ? (
-              <>
-                <p className="text-yellow-700 font-medium mb-2">⏳ 쿠팡 API 요청 한도 초과</p>
-                <p className="text-yellow-600 text-sm mb-4">잠시 후 다시 시도해주세요.</p>
-              </>
-            ) : (
-              <>
-                <p className="text-red-600 font-medium mb-2">재고 정보를 불러올 수 없습니다</p>
-                <p className="text-red-500 text-sm mb-4">{(error as Error).message}</p>
-              </>
-            )}
-            <button
-              onClick={() => refetch()}
-              className="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600"
-            >
+          <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
+            <p className="text-red-600 font-medium mb-2">재고 정보를 불러올 수 없습니다</p>
+            <p className="text-red-500 text-sm mb-4">{(error as Error).message}</p>
+            <button onClick={() => refetch()} className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">
               다시 시도
             </button>
           </div>
@@ -138,7 +133,15 @@ const InventoryPage = () => {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <Header onBack={() => navigate({ to: '/' })} onRefresh={() => { setPage(1); refetch(); }} />
+      <Header onBack={() => navigate({ to: '/' })} onSync={() => syncMutation.mutate()} isSyncing={syncMutation.isPending} lastSyncedAt={lastSyncedAt} />
+
+      {syncMutation.isError && (
+        <div className="max-w-7xl mx-auto px-4 pt-4">
+          <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-600">
+            동기화 실패: {(syncMutation.error as Error)?.message}
+          </div>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         {/* 탭 */}
@@ -395,7 +398,22 @@ const InventoryPage = () => {
   );
 };
 
-function Header({ onBack, onRefresh }: { onBack: () => void; onRefresh?: () => void }) {
+function Header({
+  onBack,
+  onSync,
+  isSyncing,
+  lastSyncedAt,
+}: {
+  onBack: () => void;
+  onSync: () => void;
+  isSyncing: boolean;
+  lastSyncedAt: string;
+}) {
+  const formatSyncTime = (t: string) => {
+    if (!t) return null;
+    return t.replace('T', ' ').slice(0, 19);
+  };
+
   return (
     <header className="bg-white shadow">
       <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
@@ -404,15 +422,18 @@ function Header({ onBack, onRefresh }: { onBack: () => void; onRefresh?: () => v
             &larr; 뒤로
           </button>
           <h1 className="text-2xl font-bold text-gray-800">재고 관리</h1>
+          {lastSyncedAt && (
+            <span className="text-xs text-gray-400">마지막 동기화: {formatSyncTime(lastSyncedAt)}</span>
+          )}
         </div>
-        {onRefresh && (
-          <button
-            onClick={onRefresh}
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm"
-          >
-            새로고침
-          </button>
-        )}
+        <button
+          onClick={onSync}
+          disabled={isSyncing}
+          className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm disabled:opacity-60 flex items-center gap-2"
+        >
+          {isSyncing && <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
+          {isSyncing ? '동기화 중...' : '동기화'}
+        </button>
       </div>
     </header>
   );

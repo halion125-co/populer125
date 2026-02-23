@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -460,10 +461,12 @@ func getReturnsFromDB(c echo.Context) error {
 // ─── 동기화 핸들러 (쿠팡 API → DB 저장) ───────────────────────────────────
 
 // syncProducts: 쿠팡 상품 API 호출 → products + product_items 테이블 저장
+// 상품 목록 API는 items를 포함하지 않으므로, 상품별로 상세 API를 별도 호출하여 options(items)를 가져옴
 func syncProducts(c echo.Context) error {
 	user := c.Get("user").(*middleware.UserContext)
 	client := coupang.NewClient(user.VendorID, user.AccessKey, user.SecretKey)
 
+	// Step 1: 상품 목록 조회 (items 없음)
 	data, err := client.GetProducts()
 	if err != nil {
 		c.Logger().Errorf("syncProducts GetProducts failed: %v", err)
@@ -478,14 +481,14 @@ func syncProducts(c echo.Context) error {
 		VendorItemId int64 `json:"vendorItemId"`
 	}
 	type ProductItem struct {
-		ItemId               int64       `json:"itemId"`
-		ItemName             string      `json:"itemName"`
-		SellerProductItemName string     `json:"sellerProductItemName"`
-		ExternalVendorSku    string      `json:"externalVendorSku"`
-		OriginalPrice        float64     `json:"originalPrice"`
-		SalePrice            float64     `json:"salePrice"`
-		StatusName           string      `json:"statusName"`
-		RocketGrowthItemData *RgItemData `json:"rocketGrowthItemData"`
+		ItemId                int64       `json:"itemId"`
+		ItemName              string      `json:"itemName"`
+		SellerProductItemName string      `json:"sellerProductItemName"`
+		ExternalVendorSku     string      `json:"externalVendorSku"`
+		OriginalPrice         float64     `json:"originalPrice"`
+		SalePrice             float64     `json:"salePrice"`
+		StatusName            string      `json:"statusName"`
+		RocketGrowthItemData  *RgItemData `json:"rocketGrowthItemData"`
 	}
 	type Product struct {
 		SellerProductId     int64         `json:"sellerProductId"`
@@ -503,16 +506,65 @@ func syncProducts(c echo.Context) error {
 		Code string    `json:"code"`
 		Data []Product `json:"data"`
 	}
+	type DetailResp struct {
+		Code string  `json:"code"`
+		Data Product `json:"data"`
+	}
 
 	var productsResp ProductsResp
 	if err := json.Unmarshal(data, &productsResp); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "응답 파싱 실패"})
 	}
 
+	// Step 2: 상품별 상세 조회를 병렬로 수행 (items/options 포함)
+	type DetailResult struct {
+		Product Product
+		Err     error
+	}
+	resultChan := make(chan DetailResult, len(productsResp.Data))
+	var wg sync.WaitGroup
+
+	for _, p := range productsResp.Data {
+		wg.Add(1)
+		go func(baseProduct Product) {
+			defer wg.Done()
+			detailData, err := client.GetProductDetail(baseProduct.SellerProductId)
+			if err != nil {
+				// 상세 조회 실패 시 기본 정보만 사용 (items 없이)
+				resultChan <- DetailResult{Product: baseProduct, Err: err}
+				return
+			}
+			var detailResp DetailResp
+			if err := json.Unmarshal(detailData, &detailResp); err != nil {
+				resultChan <- DetailResult{Product: baseProduct, Err: err}
+				return
+			}
+			// 상세 응답의 items를 기본 정보에 합쳐서 반환
+			merged := detailResp.Data
+			// 상세 응답에 기본 정보가 없을 경우 대비
+			if merged.SellerProductId == 0 {
+				merged = baseProduct
+			}
+			resultChan <- DetailResult{Product: merged, Err: nil}
+		}(p)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Step 3: 결과 수집
+	var detailedProducts []Product
+	for result := range resultChan {
+		detailedProducts = append(detailedProducts, result.Product)
+	}
+
+	// Step 4: DB에 저장
 	productCount := 0
 	itemCount := 0
 
-	for _, p := range productsResp.Data {
+	for _, p := range detailedProducts {
 		// products 테이블 upsert
 		_, err := database.DB.Exec(`
 			INSERT INTO products (user_id, seller_product_id, seller_product_name, brand, status_name,
@@ -536,7 +588,7 @@ func syncProducts(c echo.Context) error {
 		}
 		productCount++
 
-		// product_items 테이블 upsert
+		// product_items 테이블 upsert (상세 API에서 가져온 items)
 		for _, it := range p.Items {
 			vendorItemId := int64(0)
 			if it.RocketGrowthItemData != nil {

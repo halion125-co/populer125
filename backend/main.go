@@ -177,14 +177,11 @@ func getProductItemsFromDB(c echo.Context) error {
 	}
 
 	type ProductItem struct {
-		ItemID               int64   `json:"itemId"`
-		ItemName             string  `json:"itemName"`
-		SellerProductItemName string `json:"sellerProductItemName"`
-		ExternalVendorSku    string  `json:"externalVendorSku"`
-		OriginalPrice        float64 `json:"originalPrice"`
-		SalePrice            float64 `json:"salePrice"`
-		StatusName           string  `json:"statusName"`
-		VendorItemID         int64   `json:"vendorItemId"`
+		VendorItemID  int64  `json:"vendorItemId"`
+		ItemName      string `json:"itemName"`
+		StatusName    string `json:"statusName"`
+		StockQuantity int    `json:"stockQuantity"`
+		SalesLast30   int    `json:"salesLast30Days"`
 	}
 
 	// 상품 기본 정보 조회
@@ -198,12 +195,12 @@ func getProductItemsFromDB(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "상품을 찾을 수 없습니다"})
 	}
 
+	// inventory 테이블에서 해당 상품의 옵션 목록 조회 (로켓그로스 재고 현황 기반)
 	rows, err := database.DB.Query(`
-		SELECT item_id, item_name, seller_product_item_name, external_vendor_sku,
-		       original_price, sale_price, status_name, vendor_item_id
-		FROM product_items
+		SELECT vendor_item_id, item_name, status_name, stock_quantity, sales_last_30_days
+		FROM inventory
 		WHERE user_id = ? AND seller_product_id = ?
-		ORDER BY item_id ASC
+		ORDER BY vendor_item_id ASC
 	`, user.UserID, productId)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
@@ -213,9 +210,8 @@ func getProductItemsFromDB(c echo.Context) error {
 	var items []ProductItem
 	for rows.Next() {
 		var it ProductItem
-		if err := rows.Scan(&it.ItemID, &it.ItemName, &it.SellerProductItemName,
-			&it.ExternalVendorSku, &it.OriginalPrice, &it.SalePrice,
-			&it.StatusName, &it.VendorItemID); err != nil {
+		if err := rows.Scan(&it.VendorItemID, &it.ItemName, &it.StatusName,
+			&it.StockQuantity, &it.SalesLast30); err != nil {
 			continue
 		}
 		items = append(items, it)
@@ -657,25 +653,26 @@ func syncInventory(c echo.Context) error {
 		InventoryDetails InventoryDetails `json:"inventoryDetails"`
 	}
 
-	// product_items에서 vendorItemId → 상품명/아이템명 매핑
+	// product_items에서 vendorItemId → 상품명/아이템명/seller_product_id 매핑
 	type ItemInfo struct {
-		ProductName string
-		ItemName    string
-		StatusName  string
+		SellerProductId int64
+		ProductName     string
+		ItemName        string
+		StatusName      string
 	}
 	itemMap := make(map[int64]ItemInfo)
 	rows, err := database.DB.Query(`
-		SELECT pi.vendor_item_id, p.seller_product_name, pi.item_name, pi.status_name
+		SELECT pi.vendor_item_id, pi.seller_product_id, p.seller_product_name, pi.item_name, pi.status_name
 		FROM product_items pi
 		JOIN products p ON p.user_id = pi.user_id AND p.seller_product_id = pi.seller_product_id
 		WHERE pi.user_id = ? AND pi.vendor_item_id > 0
 	`, user.UserID)
 	if err == nil {
 		for rows.Next() {
-			var vid int64
+			var vid, spid int64
 			var pname, iname, sname string
-			if rows.Scan(&vid, &pname, &iname, &sname) == nil {
-				itemMap[vid] = ItemInfo{ProductName: pname, ItemName: iname, StatusName: sname}
+			if rows.Scan(&vid, &spid, &pname, &iname, &sname) == nil {
+				itemMap[vid] = ItemInfo{SellerProductId: spid, ProductName: pname, ItemName: iname, StatusName: sname}
 			}
 		}
 		rows.Close()
@@ -695,10 +692,11 @@ func syncInventory(c echo.Context) error {
 		}
 
 		_, err := database.DB.Exec(`
-			INSERT INTO inventory (user_id, vendor_item_id, product_name, item_name, status_name,
+			INSERT INTO inventory (user_id, vendor_item_id, seller_product_id, product_name, item_name, status_name,
 				stock_quantity, sales_last_30_days, is_mapped, synced_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 			ON CONFLICT(user_id, vendor_item_id) DO UPDATE SET
+				seller_product_id = excluded.seller_product_id,
 				product_name = excluded.product_name,
 				item_name = excluded.item_name,
 				status_name = excluded.status_name,
@@ -706,7 +704,7 @@ func syncInventory(c echo.Context) error {
 				sales_last_30_days = excluded.sales_last_30_days,
 				is_mapped = excluded.is_mapped,
 				synced_at = CURRENT_TIMESTAMP
-		`, user.UserID, inv.VendorItemId, info.ProductName, info.ItemName, info.StatusName,
+		`, user.UserID, inv.VendorItemId, info.SellerProductId, info.ProductName, info.ItemName, info.StatusName,
 			inv.InventoryDetails.TotalOrderableQuantity, inv.SalesCountMap.Last30Days, isMapped)
 		if err != nil {
 			c.Logger().Errorf("inventory upsert failed: %v", err)

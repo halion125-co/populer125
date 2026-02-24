@@ -110,20 +110,24 @@ func createTables() error {
 	// 재고 테이블
 	_, err = DB.Exec(`
 		CREATE TABLE IF NOT EXISTS inventory (
-			id                INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id           INTEGER NOT NULL,
-			vendor_item_id    INTEGER NOT NULL,
-			product_name      TEXT DEFAULT '',
-			item_name         TEXT DEFAULT '',
-			status_name       TEXT DEFAULT '',
-			stock_quantity    INTEGER DEFAULT 0,
+			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id            INTEGER NOT NULL,
+			vendor_item_id     INTEGER NOT NULL,
+			seller_product_id  INTEGER DEFAULT 0,
+			product_name       TEXT DEFAULT '',
+			item_name          TEXT DEFAULT '',
+			status_name        TEXT DEFAULT '',
+			stock_quantity     INTEGER DEFAULT 0,
 			sales_last_30_days INTEGER DEFAULT 0,
-			is_mapped         INTEGER DEFAULT 0,
-			synced_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+			is_mapped          INTEGER DEFAULT 0,
+			synced_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(user_id, vendor_item_id)
 		);
 	`)
 	if err != nil {
+		return err
+	}
+	if err := migrateInventory(); err != nil {
 		return err
 	}
 
@@ -198,6 +202,11 @@ func createTables() error {
 		);
 	`)
 	return err
+}
+
+func migrateInventory() error {
+	DB.Exec("ALTER TABLE inventory ADD COLUMN seller_product_id INTEGER DEFAULT 0")
+	return nil
 }
 
 func migrateUsers() error {

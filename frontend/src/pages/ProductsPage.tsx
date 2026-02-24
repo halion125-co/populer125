@@ -437,11 +437,6 @@ function ProductItemsPanel({
     },
   });
 
-  const formatPrice = (price: number) => {
-    if (!price) return '-';
-    return price.toLocaleString('ko-KR') + '원';
-  };
-
   return (
     <>
       {/* 배경 오버레이 */}
@@ -498,62 +493,43 @@ function ProductItemsPanel({
                     {data.items?.length ?? 0}개
                   </span>
                 </h3>
+                <p className="text-xs text-gray-400">로켓그로스 재고 현황 기준</p>
               </div>
 
               {(!data.items || data.items.length === 0) ? (
                 <div className="text-center py-8 text-gray-400 text-sm">
-                  등록된 옵션이 없습니다.
+                  <p>등록된 옵션이 없습니다.</p>
+                  <p className="mt-1 text-xs">재고 동기화 후 다시 확인해주세요.</p>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {data.items.map((item: ProductItem) => (
                     <div
-                      key={item.itemId}
+                      key={item.vendorItemId}
                       className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors"
                     >
                       <div className="flex items-start justify-between mb-2">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-900 truncate">
-                            {item.itemName || item.sellerProductItemName || '-'}
-                          </p>
-                          {item.sellerProductItemName && item.sellerProductItemName !== item.itemName && (
-                            <p className="text-xs text-gray-500 truncate mt-0.5">
-                              {item.sellerProductItemName}
-                            </p>
-                          )}
-                        </div>
+                        <p className="text-sm font-medium text-gray-900 flex-1 min-w-0 truncate">
+                          {item.itemName || '-'}
+                        </p>
                         <ItemStatusBadge status={item.statusName} />
                       </div>
 
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600 mt-2">
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">옵션 ID</span>
-                          <span className="font-mono">{item.itemId}</span>
+                      <div className="grid grid-cols-3 gap-2 text-xs mt-2">
+                        <div className="bg-gray-50 rounded p-2">
+                          <p className="text-gray-400 mb-0.5">옵션 ID</p>
+                          <p className="font-mono font-medium text-gray-700">{item.vendorItemId}</p>
                         </div>
-                        {item.rocketGrowthItemData?.vendorItemId && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">Vendor Item ID</span>
-                            <span className="font-mono">{item.rocketGrowthItemData.vendorItemId}</span>
-                          </div>
-                        )}
-                        {item.externalVendorSku && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">SKU</span>
-                            <span className="font-mono">{item.externalVendorSku}</span>
-                          </div>
-                        )}
-                        {item.originalPrice > 0 && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">정가</span>
-                            <span>{formatPrice(item.originalPrice)}</span>
-                          </div>
-                        )}
-                        {item.salePrice > 0 && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">판매가</span>
-                            <span className="font-semibold text-blue-600">{formatPrice(item.salePrice)}</span>
-                          </div>
-                        )}
+                        <div className="bg-gray-50 rounded p-2">
+                          <p className="text-gray-400 mb-0.5">재고</p>
+                          <p className={`font-semibold ${item.stockQuantity === 0 ? 'text-red-500' : 'text-green-600'}`}>
+                            {item.stockQuantity}개
+                          </p>
+                        </div>
+                        <div className="bg-gray-50 rounded p-2">
+                          <p className="text-gray-400 mb-0.5">30일 판매</p>
+                          <p className="font-semibold text-blue-600">{item.salesLast30Days}개</p>
+                        </div>
                       </div>
                     </div>
                   ))}

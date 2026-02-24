@@ -1,14 +1,9 @@
 export interface ProductItem {
-  itemId: number;
+  vendorItemId: number;
   itemName: string;
-  sellerProductItemName: string;
-  externalVendorSku: string;
-  originalPrice: number;
-  salePrice: number;
   statusName: string;
-  rocketGrowthItemData?: {
-    vendorItemId: number;
-  };
+  stockQuantity: number;
+  salesLast30Days: number;
 }
 
 export interface Product {

@@ -10,16 +10,12 @@ describe('Type Definitions', () => {
       sellerProductName: 'Test Product',
       displayCategoryCode: 456,
       categoryId: 789,
-      productId: 999,
-      vendorId: 'A01407257',
-      mdId: null,
-      mdName: null,
       saleStartedAt: '2024-01-01',
       saleEndedAt: '2024-12-31',
       brand: 'Test Brand',
       statusName: '승인완료',
-      createdAt: '2024-01-01',
       registrationType: 'GENERAL',
+      syncedAt: '2024-01-01',
     };
 
     expect(product.sellerProductId).toBe(123);
@@ -29,14 +25,14 @@ describe('Type Definitions', () => {
   it('TC008: Order type structure is valid', () => {
     const order: Order = {
       orderId: 12345,
-      vendorId: 'A01407257',
-      paidAt: '1234567890000',
+      paidAt: '2024-01-15',
+      syncedAt: '2024-01-15',
       orderItems: [{
         vendorItemId: 111,
         productName: 'Test Item',
         salesQuantity: 2,
-        unitSalesPrice: 10000,
-        currency: 'KRW',
+        unitPrice: 10000,
+        salesPrice: 20000,
       }],
     };
 

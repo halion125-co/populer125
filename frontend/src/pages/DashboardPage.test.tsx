@@ -11,7 +11,7 @@ vi.mock('@tanstack/react-router', () => ({
 
 describe('DashboardPage', () => {
   const mockAuthContext = {
-    user: { id: 1, email: 'test@test.com', vendorId: 'A01407257', accessKey: 'test', hasSecret: true, phone: '', createdAt: '' },
+    user: { id: 1, email: 'test@test.com', vendorId: 'A01407257', accessKey: 'test', hasSecret: true, phone: '', createdAt: '', nameKo: '', nameEn: '', zipcode: '', addressKo: '', addressDetailKo: '', addressEn: '', addressDetailEn: '', customsType: '', customsNumber: '' },
     token: 'mock-token',
     login: vi.fn(),
     logout: vi.fn(),

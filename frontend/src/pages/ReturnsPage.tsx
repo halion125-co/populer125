@@ -25,7 +25,7 @@ const ReturnsPage = () => {
     status: '',
   });
 
-  const { data: apiResponse, isLoading, isFetching, error, refetch } = useQuery({
+  const { data: apiResponse, isLoading, isFetching, error } = useQuery({
     queryKey: ['returns', searchParams.from, searchParams.to, searchParams.status],
     queryFn: async () => {
       const params: Record<string, string> = {

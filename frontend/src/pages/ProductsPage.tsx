@@ -8,7 +8,6 @@ interface Filters {
   productName: string;
   productId: string;
   brand: string;
-  status: string;
   saleDateFrom: string;
   saleDateTo: string;
   createdFrom: string;
@@ -19,12 +18,18 @@ const initialFilters: Filters = {
   productName: '',
   productId: '',
   brand: '',
-  status: '',
   saleDateFrom: '',
   saleDateTo: '',
   createdFrom: '',
   createdTo: '',
 };
+
+const TABS = [
+  { key: 'ALL', label: '전체' },
+  { key: '승인완료', label: '승인완료' },
+  { key: '판매중지', label: '판매중지' },
+  { key: '기타', label: '기타' },
+];
 
 const ProductsPage = () => {
   const navigate = useNavigate();
@@ -32,6 +37,7 @@ const ProductsPage = () => {
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [showFilters, setShowFilters] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [activeTab, setActiveTab] = useState('ALL');
 
   const { data: apiResponse, isLoading, error, refetch } = useQuery({
     queryKey: ['products'],
@@ -49,27 +55,36 @@ const ProductsPage = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products'] });
       queryClient.invalidateQueries({ queryKey: ['product-items'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
     },
   });
 
-  const statusOptions = useMemo(() => {
-    const statuses = new Set(products.map(p => p.statusName));
-    return Array.from(statuses).sort();
-  }, [products]);
-
+  // 탭 + 검색 필터 적용
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
+      // 탭 필터
+      if (activeTab === '승인완료' && p.statusName !== '승인완료') return false;
+      if (activeTab === '판매중지' && p.statusName !== '판매중지') return false;
+      if (activeTab === '기타' && (p.statusName === '승인완료' || p.statusName === '판매중지')) return false;
+      // 검색 필터
       if (filters.productName && !p.sellerProductName.toLowerCase().includes(filters.productName.toLowerCase())) return false;
       if (filters.productId && !String(p.sellerProductId).includes(filters.productId)) return false;
       if (filters.brand && !p.brand?.toLowerCase().includes(filters.brand.toLowerCase())) return false;
-      if (filters.status && p.statusName !== filters.status) return false;
       if (filters.saleDateFrom && p.saleStartedAt && p.saleStartedAt.slice(0, 10) < filters.saleDateFrom) return false;
       if (filters.saleDateTo && p.saleEndedAt && p.saleEndedAt.slice(0, 10) > filters.saleDateTo) return false;
       if (filters.createdFrom && p.syncedAt && p.syncedAt.slice(0, 10) < filters.createdFrom) return false;
       if (filters.createdTo && p.syncedAt && p.syncedAt.slice(0, 10) > filters.createdTo) return false;
       return true;
     });
-  }, [products, filters]);
+  }, [products, filters, activeTab]);
+
+  // 탭별 개수
+  const tabCounts = useMemo(() => ({
+    ALL: products.length,
+    '승인완료': products.filter(p => p.statusName === '승인완료').length,
+    '판매중지': products.filter(p => p.statusName === '판매중지').length,
+    '기타': products.filter(p => p.statusName !== '승인완료' && p.statusName !== '판매중지').length,
+  }), [products]);
 
   const hasActiveFilters = Object.values(filters).some(v => v !== '');
 
@@ -123,24 +138,22 @@ const ProductsPage = () => {
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         {/* Stats */}
-        <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="mb-4 grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="bg-white p-4 rounded-lg shadow">
-            <p className="text-sm text-gray-500">총 상품</p>
-            <p className="text-2xl font-bold text-blue-600">
-              {hasActiveFilters ? `${filteredProducts.length} / ${products.length}` : products.length}
-            </p>
+            <p className="text-xs text-gray-500">전체 상품</p>
+            <p className="text-2xl font-bold text-blue-600">{products.length}</p>
           </div>
           <div className="bg-white p-4 rounded-lg shadow">
-            <p className="text-sm text-gray-500">판매중</p>
-            <p className="text-2xl font-bold text-green-600">
-              {filteredProducts.filter(p => p.statusName === '승인완료').length}
-            </p>
+            <p className="text-xs text-gray-500">승인완료</p>
+            <p className="text-2xl font-bold text-green-600">{tabCounts['승인완료']}</p>
           </div>
           <div className="bg-white p-4 rounded-lg shadow">
-            <p className="text-sm text-gray-500">기타</p>
-            <p className="text-2xl font-bold text-gray-600">
-              {filteredProducts.filter(p => p.statusName !== '승인완료').length}
-            </p>
+            <p className="text-xs text-gray-500">판매중지</p>
+            <p className="text-2xl font-bold text-red-500">{tabCounts['판매중지']}</p>
+          </div>
+          <div className="bg-white p-4 rounded-lg shadow">
+            <p className="text-xs text-gray-500">기타</p>
+            <p className="text-2xl font-bold text-gray-500">{tabCounts['기타']}</p>
           </div>
         </div>
 
@@ -193,19 +206,6 @@ const ProductsPage = () => {
                     placeholder="브랜드 검색..."
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">상태</label>
-                  <select
-                    value={filters.status}
-                    onChange={e => setFilters({ ...filters, status: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">전체</option>
-                    {statusOptions.map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">판매기간</label>
@@ -261,6 +261,28 @@ const ProductsPage = () => {
           )}
         </div>
 
+        {/* 상태 탭 */}
+        <div className="mb-4 flex gap-1 border-b border-gray-200">
+          {TABS.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${
+                activeTab === tab.key
+                  ? 'bg-white border border-b-white border-gray-200 text-blue-600 -mb-px'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {tab.label}
+              <span className={`ml-1.5 px-1.5 py-0.5 text-xs rounded-full ${
+                activeTab === tab.key ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
+              }`}>
+                {tabCounts[tab.key as keyof typeof tabCounts]}
+              </span>
+            </button>
+          ))}
+        </div>
+
         {/* Products Table */}
         {filteredProducts.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-12 text-center">
@@ -279,7 +301,7 @@ const ProductsPage = () => {
         ) : (
           <div className="bg-white rounded-lg shadow overflow-hidden">
             <p className="px-6 py-2 text-xs text-gray-400 border-b border-gray-100">
-              상품명 또는 상품 ID를 클릭하면 옵션 상세 정보를 볼 수 있습니다.
+              상품명을 클릭하면 옵션 상세 정보를 볼 수 있습니다.
             </p>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
@@ -288,7 +310,10 @@ const ProductsPage = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       상품명
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                      옵션
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                       상품 ID
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -297,10 +322,10 @@ const ProductsPage = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       상태
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                       판매기간
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                       동기화일
                     </th>
                   </tr>
@@ -399,8 +424,15 @@ function ProductRow({
           {product.sellerProductName}
         </div>
       </td>
+      <td className="px-4 py-4 text-center whitespace-nowrap">
+        <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold ${
+          product.itemCount > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'
+        }`}>
+          {product.itemCount}
+        </span>
+      </td>
       <td className="px-6 py-4 whitespace-nowrap">
-        <span className="text-sm text-blue-600 font-mono">
+        <span className="text-sm text-gray-500 font-mono">
           {product.sellerProductId}
         </span>
       </td>

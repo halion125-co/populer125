@@ -16,6 +16,7 @@ export interface Product {
   brand: string;
   statusName: string;
   registrationType: string;
+  itemCount: number;
   syncedAt: string;
 }
 

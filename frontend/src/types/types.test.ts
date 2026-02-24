@@ -15,6 +15,7 @@ describe('Type Definitions', () => {
       brand: 'Test Brand',
       statusName: '승인완료',
       registrationType: 'GENERAL',
+      itemCount: 0,
       syncedAt: '2024-01-01',
     };
 

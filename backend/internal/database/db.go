@@ -77,11 +77,15 @@ func createTables() error {
 			display_category_code INTEGER DEFAULT 0,
 			category_id          INTEGER DEFAULT 0,
 			registration_type    TEXT DEFAULT '',
+			item_count           INTEGER DEFAULT 0,
 			synced_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(user_id, seller_product_id)
 		);
 	`)
 	if err != nil {
+		return err
+	}
+	if err := migrateProducts(); err != nil {
 		return err
 	}
 
@@ -206,6 +210,11 @@ func createTables() error {
 
 func migrateInventory() error {
 	DB.Exec("ALTER TABLE inventory ADD COLUMN seller_product_id INTEGER DEFAULT 0")
+	return nil
+}
+
+func migrateProducts() error {
+	DB.Exec("ALTER TABLE products ADD COLUMN item_count INTEGER DEFAULT 0")
 	return nil
 }
 

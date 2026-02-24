@@ -118,26 +118,27 @@ func getProductsFromDB(c echo.Context) error {
 	user := c.Get("user").(*middleware.UserContext)
 
 	type Product struct {
-		ID                 int64  `json:"id"`
-		SellerProductID    int64  `json:"sellerProductId"`
-		SellerProductName  string `json:"sellerProductName"`
-		Brand              string `json:"brand"`
-		StatusName         string `json:"statusName"`
-		SaleStartedAt      string `json:"saleStartedAt"`
-		SaleEndedAt        string `json:"saleEndedAt"`
+		ID                  int64  `json:"id"`
+		SellerProductID     int64  `json:"sellerProductId"`
+		SellerProductName   string `json:"sellerProductName"`
+		Brand               string `json:"brand"`
+		StatusName          string `json:"statusName"`
+		SaleStartedAt       string `json:"saleStartedAt"`
+		SaleEndedAt         string `json:"saleEndedAt"`
 		DisplayCategoryCode int64  `json:"displayCategoryCode"`
-		CategoryID         int64  `json:"categoryId"`
-		RegistrationType   string `json:"registrationType"`
-		SyncedAt           string `json:"syncedAt"`
+		CategoryID          int64  `json:"categoryId"`
+		RegistrationType    string `json:"registrationType"`
+		ItemCount           int    `json:"itemCount"`
+		SyncedAt            string `json:"syncedAt"`
 	}
 
 	rows, err := database.DB.Query(`
 		SELECT id, seller_product_id, seller_product_name, brand, status_name,
 		       sale_started_at, sale_ended_at, display_category_code, category_id,
-		       registration_type, synced_at
+		       registration_type, item_count, synced_at
 		FROM products
 		WHERE user_id = ?
-		ORDER BY seller_product_id DESC
+		ORDER BY seller_product_id ASC
 	`, user.UserID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
@@ -149,7 +150,7 @@ func getProductsFromDB(c echo.Context) error {
 		var p Product
 		if err := rows.Scan(&p.ID, &p.SellerProductID, &p.SellerProductName, &p.Brand,
 			&p.StatusName, &p.SaleStartedAt, &p.SaleEndedAt, &p.DisplayCategoryCode,
-			&p.CategoryID, &p.RegistrationType, &p.SyncedAt); err != nil {
+			&p.CategoryID, &p.RegistrationType, &p.ItemCount, &p.SyncedAt); err != nil {
 			continue
 		}
 		products = append(products, p)
@@ -562,10 +563,18 @@ func syncProducts(c echo.Context) error {
 
 	for _, p := range detailedProducts {
 		// products 테이블 upsert
+		// 이 상품의 유효한 RG item 개수 계산
+		rgItemCount := 0
+		for _, it := range p.Items {
+			if it.RocketGrowthItemData != nil && it.RocketGrowthItemData.ItemId != 0 {
+				rgItemCount++
+			}
+		}
+
 		_, err := database.DB.Exec(`
 			INSERT INTO products (user_id, seller_product_id, seller_product_name, brand, status_name,
-				sale_started_at, sale_ended_at, display_category_code, category_id, registration_type, synced_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+				sale_started_at, sale_ended_at, display_category_code, category_id, registration_type, item_count, synced_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 			ON CONFLICT(user_id, seller_product_id) DO UPDATE SET
 				seller_product_name = excluded.seller_product_name,
 				brand = excluded.brand,
@@ -575,9 +584,10 @@ func syncProducts(c echo.Context) error {
 				display_category_code = excluded.display_category_code,
 				category_id = excluded.category_id,
 				registration_type = excluded.registration_type,
+				item_count = excluded.item_count,
 				synced_at = CURRENT_TIMESTAMP
 		`, user.UserID, p.SellerProductId, p.SellerProductName, p.Brand, p.StatusName,
-			p.SaleStartedAt, p.SaleEndedAt, p.DisplayCategoryCode, p.CategoryId, p.RegistrationType)
+			p.SaleStartedAt, p.SaleEndedAt, p.DisplayCategoryCode, p.CategoryId, p.RegistrationType, rgItemCount)
 		if err != nil {
 			c.Logger().Errorf("products upsert failed: %v", err)
 			continue
@@ -622,21 +632,81 @@ func syncProducts(c echo.Context) error {
 
 	upsertSyncStatus(user.UserID, "products", productCount)
 
-	// inventory 테이블의 seller_product_id 업데이트 (product_items와 vendorItemId로 매핑)
-	database.DB.Exec(`
-		UPDATE inventory SET seller_product_id = (
-			SELECT pi.seller_product_id FROM product_items pi
-			WHERE pi.user_id = inventory.user_id AND pi.vendor_item_id = inventory.vendor_item_id
-			LIMIT 1
-		)
-		WHERE user_id = ? AND seller_product_id = 0
-	`, user.UserID)
+	// ── 재고 자동 동기화 ──────────────────────────────────────────────────────
+	invClient := coupang.NewClient(user.VendorID, user.AccessKey, user.SecretKey)
+	invRawItems, invErr := invClient.GetInventorySummaries()
+	invCount := 0
+	if invErr == nil {
+		type SalesCountMap struct {
+			Last30Days int `json:"SALES_COUNT_LAST_THIRTY_DAYS"`
+		}
+		type InventoryDetails struct {
+			TotalOrderableQuantity int `json:"totalOrderableQuantity"`
+		}
+		type InvSummaryItem struct {
+			VendorItemId     int64            `json:"vendorItemId"`
+			SalesCountMap    SalesCountMap    `json:"salesCountMap"`
+			InventoryDetails InventoryDetails `json:"inventoryDetails"`
+		}
+		type ItemInfo struct {
+			SellerProductId int64
+			ProductName     string
+			ItemName        string
+			StatusName      string
+		}
+		itemMap := make(map[int64]ItemInfo)
+		rows, qErr := database.DB.Query(`
+			SELECT pi.vendor_item_id, pi.seller_product_id, p.seller_product_name, pi.item_name, pi.status_name
+			FROM product_items pi
+			JOIN products p ON p.user_id = pi.user_id AND p.seller_product_id = pi.seller_product_id
+			WHERE pi.user_id = ? AND pi.vendor_item_id > 0
+		`, user.UserID)
+		if qErr == nil {
+			for rows.Next() {
+				var vid, spid int64
+				var pname, iname, sname string
+				if rows.Scan(&vid, &spid, &pname, &iname, &sname) == nil {
+					itemMap[vid] = ItemInfo{SellerProductId: spid, ProductName: pname, ItemName: iname, StatusName: sname}
+				}
+			}
+			rows.Close()
+		}
+		for _, raw := range invRawItems {
+			var inv InvSummaryItem
+			if err := json.Unmarshal(raw, &inv); err != nil {
+				continue
+			}
+			info, mapped := itemMap[inv.VendorItemId]
+			isMapped := 0
+			if mapped {
+				isMapped = 1
+			}
+			database.DB.Exec(`
+				INSERT INTO inventory (user_id, vendor_item_id, seller_product_id, product_name, item_name, status_name,
+					stock_quantity, sales_last_30_days, is_mapped, synced_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+				ON CONFLICT(user_id, vendor_item_id) DO UPDATE SET
+					seller_product_id = excluded.seller_product_id,
+					product_name = excluded.product_name,
+					item_name = excluded.item_name,
+					status_name = excluded.status_name,
+					stock_quantity = excluded.stock_quantity,
+					sales_last_30_days = excluded.sales_last_30_days,
+					is_mapped = excluded.is_mapped,
+					synced_at = CURRENT_TIMESTAMP
+			`, user.UserID, inv.VendorItemId, info.SellerProductId, info.ProductName, info.ItemName, info.StatusName,
+				inv.InventoryDetails.TotalOrderableQuantity, inv.SalesCountMap.Last30Days, isMapped)
+			invCount++
+		}
+		upsertSyncStatus(user.UserID, "inventory", invCount)
+	}
 
 	syncedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"code":         "SUCCESS",
 		"productCount": productCount,
 		"itemCount":    itemCount,
+		"invCount":     invCount,
 		"syncedAt":     syncedAt,
 	})
 }

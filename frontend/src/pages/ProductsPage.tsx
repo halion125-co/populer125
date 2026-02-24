@@ -48,6 +48,7 @@ const ProductsPage = () => {
     mutationFn: () => apiClient.post('/api/coupang/sync/products'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products'] });
+      queryClient.invalidateQueries({ queryKey: ['product-items'] });
     },
   });
 

@@ -209,6 +209,12 @@ func (c *Client) GetOrders(paidDateFrom, paidDateTo string) ([]byte, error) {
 	return json.Marshal(result)
 }
 
+// GetProductDetail fetches a single product with full item (option) details
+func (c *Client) GetProductDetail(sellerProductId int64) ([]byte, error) {
+	path := fmt.Sprintf("/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/%d", sellerProductId)
+	return c.Request("GET", path, fmt.Sprintf("vendorId=%s", c.VendorID))
+}
+
 // GetInventory fetches inventory for a specific vendorItemId
 func (c *Client) GetInventory(vendorItemId string) ([]byte, error) {
 	path := fmt.Sprintf("/v2/providers/openapi/apis/api/v4/vendors/%s/inventories/%s", c.VendorID, vendorItemId)

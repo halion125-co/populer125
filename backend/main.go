@@ -475,9 +475,9 @@ func syncProducts(c echo.Context) error {
 
 	type RgItemData struct {
 		VendorItemId int64 `json:"vendorItemId"`
+		ItemId       int64 `json:"itemId"`
 	}
 	type ProductItem struct {
-		ItemId                int64       `json:"itemId"`
 		ItemName              string      `json:"itemName"`
 		SellerProductItemName string      `json:"sellerProductItemName"`
 		ExternalVendorSku     string      `json:"externalVendorSku"`
@@ -585,10 +585,15 @@ func syncProducts(c echo.Context) error {
 		productCount++
 
 		// product_items 테이블 upsert (상세 API에서 가져온 items)
+		// itemId와 vendorItemId는 rocketGrowthItemData 하위에 있음
 		for _, it := range p.Items {
-			vendorItemId := int64(0)
-			if it.RocketGrowthItemData != nil {
-				vendorItemId = it.RocketGrowthItemData.VendorItemId
+			if it.RocketGrowthItemData == nil {
+				continue // 로켓그로스 데이터 없으면 skip
+			}
+			itemId := it.RocketGrowthItemData.ItemId
+			vendorItemId := it.RocketGrowthItemData.VendorItemId
+			if itemId == 0 {
+				continue
 			}
 			_, err := database.DB.Exec(`
 				INSERT INTO product_items (user_id, seller_product_id, item_id, item_name,
@@ -604,7 +609,7 @@ func syncProducts(c echo.Context) error {
 					status_name = excluded.status_name,
 					vendor_item_id = excluded.vendor_item_id,
 					synced_at = CURRENT_TIMESTAMP
-			`, user.UserID, p.SellerProductId, it.ItemId, it.ItemName,
+			`, user.UserID, p.SellerProductId, itemId, it.ItemName,
 				it.SellerProductItemName, it.ExternalVendorSku, it.OriginalPrice, it.SalePrice,
 				it.StatusName, vendorItemId)
 			if err != nil {
@@ -616,6 +621,16 @@ func syncProducts(c echo.Context) error {
 	}
 
 	upsertSyncStatus(user.UserID, "products", productCount)
+
+	// inventory 테이블의 seller_product_id 업데이트 (product_items와 vendorItemId로 매핑)
+	database.DB.Exec(`
+		UPDATE inventory SET seller_product_id = (
+			SELECT pi.seller_product_id FROM product_items pi
+			WHERE pi.user_id = inventory.user_id AND pi.vendor_item_id = inventory.vendor_item_id
+			LIMIT 1
+		)
+		WHERE user_id = ? AND seller_product_id = 0
+	`, user.UserID)
 
 	syncedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	return c.JSON(http.StatusOK, map[string]interface{}{

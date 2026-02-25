@@ -24,13 +24,13 @@ const initialFilters: Filters = {
   createdTo: '',
 };
 
-const SELLING_STATUSES = ['판매중', '부분 판매중'];
-const STOPPED_STATUSES = ['판매중지'];
+const APPROVED_STATUSES = ['승인완료'];
+const REJECTED_STATUSES = ['승인반려'];
 
 const TABS = [
   { key: 'ALL', label: '전체' },
-  { key: '판매중', label: '판매중' },
-  { key: '판매중지', label: '판매중지' },
+  { key: '승인완료', label: '승인완료' },
+  { key: '승인반려', label: '승인반려' },
   { key: '기타', label: '기타' },
 ];
 
@@ -66,9 +66,9 @@ const ProductsPage = () => {
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
       // 탭 필터
-      if (activeTab === '판매중' && !SELLING_STATUSES.includes(p.statusName)) return false;
-      if (activeTab === '판매중지' && !STOPPED_STATUSES.includes(p.statusName)) return false;
-      if (activeTab === '기타' && (SELLING_STATUSES.includes(p.statusName) || STOPPED_STATUSES.includes(p.statusName))) return false;
+      if (activeTab === '승인완료' && !APPROVED_STATUSES.includes(p.statusName)) return false;
+      if (activeTab === '승인반려' && !REJECTED_STATUSES.includes(p.statusName)) return false;
+      if (activeTab === '기타' && (APPROVED_STATUSES.includes(p.statusName) || REJECTED_STATUSES.includes(p.statusName))) return false;
       // 검색 필터
       if (filters.productName && !p.sellerProductName.toLowerCase().includes(filters.productName.toLowerCase())) return false;
       if (filters.productId && !String(p.sellerProductId).includes(filters.productId)) return false;
@@ -84,9 +84,9 @@ const ProductsPage = () => {
   // 탭별 개수
   const tabCounts = useMemo(() => ({
     ALL: products.length,
-    '판매중': products.filter(p => SELLING_STATUSES.includes(p.statusName)).length,
-    '판매중지': products.filter(p => STOPPED_STATUSES.includes(p.statusName)).length,
-    '기타': products.filter(p => !SELLING_STATUSES.includes(p.statusName) && !STOPPED_STATUSES.includes(p.statusName)).length,
+    '승인완료': products.filter(p => APPROVED_STATUSES.includes(p.statusName)).length,
+    '승인반려': products.filter(p => REJECTED_STATUSES.includes(p.statusName)).length,
+    '기타': products.filter(p => !APPROVED_STATUSES.includes(p.statusName) && !REJECTED_STATUSES.includes(p.statusName)).length,
   }), [products]);
 
   const hasActiveFilters = Object.values(filters).some(v => v !== '');
@@ -147,12 +147,12 @@ const ProductsPage = () => {
             <p className="text-2xl font-bold text-blue-600">{products.length}</p>
           </div>
           <div className="bg-white p-4 rounded-lg shadow">
-            <p className="text-xs text-gray-500">판매중</p>
-            <p className="text-2xl font-bold text-green-600">{tabCounts['판매중']}</p>
+            <p className="text-xs text-gray-500">승인완료</p>
+            <p className="text-2xl font-bold text-green-600">{tabCounts['승인완료']}</p>
           </div>
           <div className="bg-white p-4 rounded-lg shadow">
-            <p className="text-xs text-gray-500">판매중지</p>
-            <p className="text-2xl font-bold text-red-500">{tabCounts['판매중지']}</p>
+            <p className="text-xs text-gray-500">승인반려</p>
+            <p className="text-2xl font-bold text-yellow-500">{tabCounts['승인반려']}</p>
           </div>
           <div className="bg-white p-4 rounded-lg shadow">
             <p className="text-xs text-gray-500">기타</p>
@@ -580,11 +580,9 @@ function ProductItemsPanel({
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
-    '판매중': 'bg-green-100 text-green-800',
-    '부분 판매중': 'bg-blue-100 text-blue-800',
-    '판매중지': 'bg-red-100 text-red-800',
     '승인완료': 'bg-green-100 text-green-800',
     '승인반려': 'bg-yellow-100 text-yellow-800',
+    '판매중지': 'bg-red-100 text-red-800',
     '삭제': 'bg-gray-100 text-gray-800',
   };
   const style = styles[status] || 'bg-gray-100 text-gray-600';

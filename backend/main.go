@@ -846,15 +846,14 @@ func syncOrders(c echo.Context) error {
 	}
 
 	type OrderItem struct {
-		VendorItemId  int64   `json:"vendorItemId"`
-		ProductName   string  `json:"productName"`
-		SalesQuantity int     `json:"salesQuantity"`
-		UnitPrice     float64 `json:"unitPrice"`
-		SalesPrice    float64 `json:"salesPrice"`
+		VendorItemId   int64  `json:"vendorItemId"`
+		ProductName    string `json:"productName"`
+		SalesQuantity  int    `json:"salesQuantity"`
+		UnitSalesPrice string `json:"unitSalesPrice"` // API returns string e.g. "8900.0"
 	}
 	type Order struct {
-		OrderId   int64       `json:"orderId"`
-		PaidAt    string      `json:"paidAt"`
+		OrderId    int64       `json:"orderId"`
+		PaidAt     int64       `json:"paidAt"` // API returns Unix milliseconds
 		OrderItems []OrderItem `json:"orderItems"`
 	}
 	type OrdersResp struct {
@@ -864,11 +863,15 @@ func syncOrders(c echo.Context) error {
 
 	var ordersResp OrdersResp
 	if err := json.Unmarshal(data, &ordersResp); err != nil {
+		c.Logger().Errorf("syncOrders Unmarshal failed: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "응답 파싱 실패"})
 	}
 
 	orderCount := 0
 	for _, o := range ordersResp.Data {
+		// paidAt: Unix milliseconds → RFC3339 string
+		paidAtStr := time.Unix(o.PaidAt/1000, 0).UTC().Format("2006-01-02T15:04:05Z")
+
 		// orders 테이블 upsert
 		_, err := database.DB.Exec(`
 			INSERT INTO orders (user_id, order_id, paid_at, synced_at)
@@ -876,7 +879,7 @@ func syncOrders(c echo.Context) error {
 			ON CONFLICT(user_id, order_id) DO UPDATE SET
 				paid_at = excluded.paid_at,
 				synced_at = CURRENT_TIMESTAMP
-		`, user.UserID, o.OrderId, o.PaidAt)
+		`, user.UserID, o.OrderId, paidAtStr)
 		if err != nil {
 			c.Logger().Errorf("orders upsert failed: %v", err)
 			continue
@@ -885,10 +888,13 @@ func syncOrders(c echo.Context) error {
 		// 기존 order_items 삭제 후 재삽입
 		database.DB.Exec("DELETE FROM order_items WHERE user_id = ? AND order_id = ?", user.UserID, o.OrderId)
 		for _, oi := range o.OrderItems {
+			// unitSalesPrice is a string like "8900.0", store as-is in unit_price
+			var unitPrice float64
+			fmt.Sscanf(oi.UnitSalesPrice, "%f", &unitPrice)
 			database.DB.Exec(`
 				INSERT INTO order_items (user_id, order_id, vendor_item_id, product_name, sales_quantity, unit_price, sales_price)
 				VALUES (?, ?, ?, ?, ?, ?, ?)
-			`, user.UserID, o.OrderId, oi.VendorItemId, oi.ProductName, oi.SalesQuantity, oi.UnitPrice, oi.SalesPrice)
+			`, user.UserID, o.OrderId, oi.VendorItemId, oi.ProductName, oi.SalesQuantity, unitPrice, unitPrice)
 		}
 		orderCount++
 	}

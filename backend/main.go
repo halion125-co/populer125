@@ -809,30 +809,33 @@ func syncInventory(c echo.Context) error {
 }
 
 // syncOrders: 쿠팡 주문 API 호출 → orders + order_items 테이블 저장
-// 마지막 동기화 이후 시점부터 현재까지 자동 계산
+// fromDate, toDate 쿼리 파라미터로 날짜 범위 지정 가능 (없으면 자동 계산)
 func syncOrders(c echo.Context) error {
 	user := c.Get("user").(*middleware.UserContext)
 	client := coupang.NewClient(user.VendorID, user.AccessKey, user.SecretKey)
 
 	now := time.Now()
-	toStr := now.Format("2006-01-02")
 
-	// 마지막 동기화 시각 기반으로 from 계산
-	lastSynced := getLastSyncedAt(user.UserID, "orders")
-	var fromStr string
-	if lastSynced != "" {
-		// ISO8601 형식 파싱 (예: "2025-01-15T10:30:00Z")
-		t, err := time.Parse("2006-01-02T15:04:05Z", lastSynced)
-		if err != nil {
-			t, err = time.Parse("2006-01-02T15:04:05", lastSynced)
+	// 요청 파라미터에서 날짜 범위 우선 적용
+	fromStr := c.QueryParam("fromDate")
+	toStr := c.QueryParam("toDate")
+
+	if fromStr == "" || toStr == "" {
+		// 파라미터 없으면 자동 계산 (마지막 동기화 이후 ~ 오늘)
+		toStr = now.Format("2006-01-02")
+		lastSynced := getLastSyncedAt(user.UserID, "orders")
+		if lastSynced != "" {
+			t, err := time.Parse("2006-01-02T15:04:05Z", lastSynced)
+			if err != nil {
+				t, err = time.Parse("2006-01-02T15:04:05", lastSynced)
+			}
+			if err == nil {
+				fromStr = t.Format("2006-01-02")
+			}
 		}
-		if err == nil {
-			fromStr = t.Format("2006-01-02")
+		if fromStr == "" {
+			fromStr = now.AddDate(0, 0, -90).Format("2006-01-02")
 		}
-	}
-	if fromStr == "" {
-		// 최초 동기화: 90일치
-		fromStr = now.AddDate(0, 0, -90).Format("2006-01-02")
 	}
 
 	data, err := client.GetOrders(fromStr, toStr)

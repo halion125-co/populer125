@@ -3,7 +3,7 @@
 # 간단한 배포 스크립트 (Windows Git Bash에서도 실행 가능)
 
 # NAS 접속 정보
-NAS_HOST="172.30.1.27"
+NAS_HOST="172.30.1.28"
 NAS_USER="halion"
 DEPLOY_PATH="/volume1/docker/populer125"
 

@@ -48,7 +48,7 @@ const OrdersPage = () => {
   const lastSyncedAt = apiResponse?.lastSyncedAt || '';
 
   const syncMutation = useMutation({
-    mutationFn: () => apiClient.post('/api/coupang/sync/orders'),
+    mutationFn: () => apiClient.post(`/api/coupang/sync/orders?fromDate=${dateRange.from}&toDate=${dateRange.to}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
     },
@@ -98,7 +98,7 @@ const OrdersPage = () => {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-100">
-        <Header onBack={() => navigate({ to: '/' })} onSync={() => syncMutation.mutate()} isSyncing={syncMutation.isPending} lastSyncedAt={lastSyncedAt} />
+        <Header onBack={() => navigate({ to: '/' })} onSync={() => syncMutation.mutate()} isSyncing={syncMutation.isPending} lastSyncedAt={lastSyncedAt} syncDateRange={dateRange} />
         <main className="max-w-7xl mx-auto px-4 py-8">
           <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
             <p className="text-red-600 font-medium mb-2">주문 목록을 불러올 수 없습니다</p>
@@ -119,6 +119,7 @@ const OrdersPage = () => {
         onSync={() => syncMutation.mutate()}
         isSyncing={syncMutation.isPending}
         lastSyncedAt={lastSyncedAt}
+        syncDateRange={dateRange}
       />
 
       {syncMutation.isError && (
@@ -319,11 +320,13 @@ function Header({
   onSync,
   isSyncing,
   lastSyncedAt,
+  syncDateRange,
 }: {
   onBack: () => void;
   onSync: () => void;
   isSyncing: boolean;
   lastSyncedAt: string;
+  syncDateRange: { from: string; to: string };
 }) {
   const formatSyncTime = (t: string) => {
     if (!t) return null;
@@ -342,14 +345,19 @@ function Header({
             <span className="text-xs text-gray-400">마지막 동기화: {formatSyncTime(lastSyncedAt)}</span>
           )}
         </div>
-        <button
-          onClick={onSync}
-          disabled={isSyncing}
-          className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm disabled:opacity-60 flex items-center gap-2"
-        >
-          {isSyncing && <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
-          {isSyncing ? '동기화 중...' : '동기화'}
-        </button>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-400">
+            동기화 범위: {syncDateRange.from} ~ {syncDateRange.to}
+          </span>
+          <button
+            onClick={onSync}
+            disabled={isSyncing}
+            className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm disabled:opacity-60 flex items-center gap-2"
+          >
+            {isSyncing && <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
+            {isSyncing ? '동기화 중...' : '동기화'}
+          </button>
+        </div>
       </div>
     </header>
   );

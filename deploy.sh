@@ -2,7 +2,7 @@
 
 # RocketGrowth NAS 배포 스크립트
 
-NAS_HOST="172.30.1.27"
+NAS_HOST="172.30.1.28"
 NAS_USER="halion"
 SSH_KEY="$HOME/.ssh/nas_key"
 DEPLOY_PATH="/volume2/docker/populer125"

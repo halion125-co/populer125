@@ -205,6 +205,20 @@ func createTables() error {
 			UNIQUE(user_id, data_type)
 		);
 	`)
+	if err != nil {
+		return err
+	}
+
+	// 주문 동기화 날짜 범위 이력 테이블
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS order_sync_ranges (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id    INTEGER NOT NULL,
+			from_date  TEXT NOT NULL,
+			to_date    TEXT NOT NULL,
+			synced_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
 	return err
 }
 

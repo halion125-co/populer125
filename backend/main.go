@@ -809,19 +809,18 @@ func syncInventory(c echo.Context) error {
 }
 
 // syncOrders: 쿠팡 주문 API 호출 → orders + order_items 테이블 저장
-// fromDate, toDate 쿼리 파라미터로 날짜 범위 지정 가능 (없으면 자동 계산)
+// fromDate, toDate 쿼리 파라미터로 날짜 범위 지정
+// force=true 이면 해당 기간 기존 데이터 삭제 후 재동기화
 func syncOrders(c echo.Context) error {
 	user := c.Get("user").(*middleware.UserContext)
 	client := coupang.NewClient(user.VendorID, user.AccessKey, user.SecretKey)
 
 	now := time.Now()
-
-	// 요청 파라미터에서 날짜 범위 우선 적용
 	fromStr := c.QueryParam("fromDate")
 	toStr := c.QueryParam("toDate")
+	force := c.QueryParam("force") == "true"
 
 	if fromStr == "" || toStr == "" {
-		// 파라미터 없으면 자동 계산 (마지막 동기화 이후 ~ 오늘)
 		toStr = now.Format("2006-01-02")
 		lastSynced := getLastSyncedAt(user.UserID, "orders")
 		if lastSynced != "" {
@@ -838,11 +837,70 @@ func syncOrders(c echo.Context) error {
 		}
 	}
 
-	data, err := client.GetOrders(fromStr, toStr)
+	// orders 테이블에서 이미 동기화된 paid_at 날짜 범위 확인
+	var dbMinDate, dbMaxDate string
+	database.DB.QueryRow(
+		`SELECT COALESCE(MIN(substr(paid_at,1,10)),''), COALESCE(MAX(substr(paid_at,1,10)),'')
+		 FROM orders WHERE user_id = ?`,
+		user.UserID,
+	).Scan(&dbMinDate, &dbMaxDate)
+
+	// 겹치는 구간 계산
+	overlapFrom, overlapTo := "", ""
+	if dbMinDate != "" && dbMaxDate != "" {
+		// 겹침: max(reqFrom, dbMin) ~ min(reqTo, dbMax)
+		oFrom := fromStr
+		if dbMinDate > oFrom {
+			oFrom = dbMinDate
+		}
+		oTo := toStr
+		if dbMaxDate < oTo {
+			oTo = dbMaxDate
+		}
+		if oFrom <= oTo {
+			overlapFrom = oFrom
+			overlapTo = oTo
+		}
+	}
+
+	hasOverlap := overlapFrom != ""
+
+	// 겹치는 구간이 있고 force가 아닌 경우 → 프론트에 확인 요청
+	if hasOverlap && !force {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"code":        "OVERLAP_DETECTED",
+			"overlapFrom": overlapFrom,
+			"overlapTo":   overlapTo,
+			"fromDate":    fromStr,
+			"toDate":      toStr,
+		})
+	}
+
+	// force=true: 겹치는 기간의 기존 데이터 삭제
+	if hasOverlap && force {
+		database.DB.Exec(
+			`DELETE FROM order_items WHERE user_id = ? AND order_id IN (
+				SELECT order_id FROM orders WHERE user_id = ? AND substr(paid_at,1,10) >= ? AND substr(paid_at,1,10) <= ?
+			)`,
+			user.UserID, user.UserID, overlapFrom, overlapTo,
+		)
+		database.DB.Exec(
+			`DELETE FROM orders WHERE user_id = ? AND substr(paid_at,1,10) >= ? AND substr(paid_at,1,10) <= ?`,
+			user.UserID, overlapFrom, overlapTo,
+		)
+	}
+
+	// 실제 동기화할 범위 결정
+	// force=true: 전체 요청 범위 동기화
+	// force=false + 겹침 없음: 전체 요청 범위 동기화
+	// (겹침 있고 force=false는 위에서 이미 반환됨)
+	syncFrom := fromStr
+	syncTo := toStr
+
+	data, err := client.GetOrders(syncFrom, syncTo)
 	if err != nil {
 		c.Logger().Errorf("syncOrders GetOrders failed: %v", err)
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "429") {
+		if strings.Contains(err.Error(), "429") {
 			return c.JSON(http.StatusTooManyRequests, map[string]string{"error": "쿠팡 API 요청 한도 초과. 잠시 후 다시 시도해주세요."})
 		}
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -852,11 +910,11 @@ func syncOrders(c echo.Context) error {
 		VendorItemId   int64  `json:"vendorItemId"`
 		ProductName    string `json:"productName"`
 		SalesQuantity  int    `json:"salesQuantity"`
-		UnitSalesPrice string `json:"unitSalesPrice"` // API returns string e.g. "8900.0"
+		UnitSalesPrice string `json:"unitSalesPrice"`
 	}
 	type Order struct {
 		OrderId    int64       `json:"orderId"`
-		PaidAt     int64       `json:"paidAt"` // API returns Unix milliseconds
+		PaidAt     int64       `json:"paidAt"`
 		OrderItems []OrderItem `json:"orderItems"`
 	}
 	type OrdersResp struct {
@@ -872,10 +930,8 @@ func syncOrders(c echo.Context) error {
 
 	orderCount := 0
 	for _, o := range ordersResp.Data {
-		// paidAt: Unix milliseconds → RFC3339 string
 		paidAtStr := time.Unix(o.PaidAt/1000, 0).UTC().Format("2006-01-02T15:04:05Z")
 
-		// orders 테이블 upsert
 		_, err := database.DB.Exec(`
 			INSERT INTO orders (user_id, order_id, paid_at, synced_at)
 			VALUES (?, ?, ?, CURRENT_TIMESTAMP)
@@ -888,10 +944,8 @@ func syncOrders(c echo.Context) error {
 			continue
 		}
 
-		// 기존 order_items 삭제 후 재삽입
 		database.DB.Exec("DELETE FROM order_items WHERE user_id = ? AND order_id = ?", user.UserID, o.OrderId)
 		for _, oi := range o.OrderItems {
-			// unitSalesPrice is a string like "8900.0", store as-is in unit_price
 			var unitPrice float64
 			fmt.Sscanf(oi.UnitSalesPrice, "%f", &unitPrice)
 			database.DB.Exec(`
@@ -906,11 +960,11 @@ func syncOrders(c echo.Context) error {
 
 	syncedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"code":      "SUCCESS",
-		"count":     orderCount,
-		"syncedAt":  syncedAt,
-		"fromDate":  fromStr,
-		"toDate":    toStr,
+		"code":     "SUCCESS",
+		"count":    orderCount,
+		"syncedAt": syncedAt,
+		"fromDate": syncFrom,
+		"toDate":   syncTo,
 	})
 }
 

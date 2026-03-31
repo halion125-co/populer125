@@ -137,6 +137,26 @@ type ordersPage struct {
 	Data      []json.RawMessage `json:"data"`
 }
 
+// requestWithRetry makes an API request with automatic retry on 429
+func (c *Client) requestWithRetry(method, path, query string) ([]byte, error) {
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// 재시도 전 대기: 1회차 3초, 2회차 6초
+			time.Sleep(time.Duration(attempt*3) * time.Second)
+		}
+		body, err := c.Request(method, path, query)
+		if err != nil {
+			if strings.Contains(err.Error(), "429") && attempt < maxRetries-1 {
+				continue
+			}
+			return nil, err
+		}
+		return body, nil
+	}
+	return nil, fmt.Errorf("max retries exceeded")
+}
+
 // GetOrders fetches all orders by splitting date range into 30-day chunks (API limit)
 func (c *Client) GetOrders(paidDateFrom, paidDateTo string) ([]byte, error) {
 	// Parse date strings
@@ -157,7 +177,14 @@ func (c *Client) GetOrders(paidDateFrom, paidDateTo string) ([]byte, error) {
 
 	// Split into 30-day chunks (API limit: 1 month)
 	currentFrom := fromDate
-	for currentFrom.Before(toDate) || currentFrom.Equal(toDate) {
+	chunkIndex := 0
+	for currentFrom.Before(toDate) {
+		// 청크 간 딜레이 (첫 번째 청크는 제외)
+		if chunkIndex > 0 {
+			time.Sleep(1 * time.Second)
+		}
+		chunkIndex++
+
 		// Calculate chunk end (30 days from current start, but not exceeding toDate)
 		currentTo := currentFrom.AddDate(0, 0, 30)
 		if currentTo.After(toDate) {
@@ -171,13 +198,20 @@ func (c *Client) GetOrders(paidDateFrom, paidDateTo string) ([]byte, error) {
 		// Fetch orders for this chunk with pagination
 		baseQuery := fmt.Sprintf("paidDateFrom=%s&paidDateTo=%s", fromStr, toStr)
 		nextToken := ""
+		pageIndex := 0
 		for {
+			// 페이지 간 딜레이 (첫 번째 페이지는 제외)
+			if pageIndex > 0 {
+				time.Sleep(500 * time.Millisecond)
+			}
+			pageIndex++
+
 			query := baseQuery
 			if nextToken != "" {
 				query += "&nextToken=" + nextToken
 			}
 
-			body, err := c.Request("GET", path, query)
+			body, err := c.requestWithRetry("GET", path, query)
 			if err != nil {
 				return nil, err
 			}
@@ -197,7 +231,7 @@ func (c *Client) GetOrders(paidDateFrom, paidDateTo string) ([]byte, error) {
 		}
 
 		// Move to next chunk
-		currentFrom = currentTo.AddDate(0, 0, 1)
+		currentFrom = currentTo
 	}
 
 	// Build combined response

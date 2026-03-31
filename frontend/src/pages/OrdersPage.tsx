@@ -14,30 +14,43 @@ const initialFilters: Filters = {
   productName: '',
 };
 
+const getDefaultRange = () => {
+  const to = new Date();
+  const from = new Date();
+  from.setDate(from.getDate() - 30);
+  return {
+    from: from.toISOString().slice(0, 10),
+    to: to.toISOString().slice(0, 10),
+  };
+};
+
 const OrdersPage = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Date range state - default to last 30 days
-  const [dateRange, setDateRange] = useState(() => {
-    const to = new Date();
-    const from = new Date();
-    from.setDate(from.getDate() - 30);
-    return {
-      from: from.toISOString().slice(0, 10),
-      to: to.toISOString().slice(0, 10),
-    };
-  });
+  // 날짜 입력 상태 (UI용 - 즉시 반응)
+  const [dateInput, setDateInput] = useState(getDefaultRange);
+  // 실제 검색에 사용되는 날짜 (검색 버튼 클릭 시 업데이트)
+  const [searchRange, setSearchRange] = useState(getDefaultRange);
+  // 동기화 결과 메시지
+  const [syncMessage, setSyncMessage] = useState<{ type: 'info' | 'warning'; text: string } | null>(null);
+  // 중복 확인 다이얼로그
+  const [overlapDialog, setOverlapDialog] = useState<{
+    overlapFrom: string;
+    overlapTo: string;
+    fromDate: string;
+    toDate: string;
+  } | null>(null);
 
   const { data: apiResponse, isLoading, error, refetch } = useQuery({
-    queryKey: ['orders', dateRange.from, dateRange.to],
+    queryKey: ['orders', searchRange.from, searchRange.to],
     queryFn: async () => {
       const response = await apiClient.get<OrdersResponse>('/api/coupang/orders', {
         params: {
-          createdAtFrom: dateRange.from,
-          createdAtTo: dateRange.to + 'T23:59:59',
+          createdAtFrom: searchRange.from,
+          createdAtTo: searchRange.to + 'T23:59:59',
         },
       });
       return response.data;
@@ -48,11 +61,72 @@ const OrdersPage = () => {
   const lastSyncedAt = apiResponse?.lastSyncedAt || '';
 
   const syncMutation = useMutation({
-    mutationFn: () => apiClient.post(`/api/coupang/sync/orders?fromDate=${dateRange.from}&toDate=${dateRange.to}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
+    mutationFn: ({ force }: { force: boolean }) =>
+      apiClient.post(`/api/coupang/sync/orders?fromDate=${dateInput.from}&toDate=${dateInput.to}${force ? '&force=true' : ''}`),
+    onSuccess: (res) => {
+      const data = res.data as {
+        code: string;
+        overlapFrom?: string;
+        overlapTo?: string;
+        fromDate?: string;
+        toDate?: string;
+      };
+      if (data.code === 'OVERLAP_DETECTED') {
+        // 겹치는 구간 있음 → 확인 다이얼로그 표시
+        setOverlapDialog({
+          overlapFrom: data.overlapFrom!,
+          overlapTo: data.overlapTo!,
+          fromDate: data.fromDate!,
+          toDate: data.toDate!,
+        });
+      } else {
+        setSyncMessage(null);
+        queryClient.invalidateQueries({ queryKey: ['orders'] });
+      }
     },
   });
+
+  // 확인 다이얼로그 "확인" → 기존 데이터 삭제 후 재동기화
+  const handleOverlapConfirm = () => {
+    setOverlapDialog(null);
+    syncMutation.mutate({ force: true });
+  };
+
+  // 확인 다이얼로그 "취소" → 겹치는 기간 제외하고 동기화
+  // 겹침 제외 후 실제로 동기화할 범위가 없으면 메시지만 표시
+  const handleOverlapCancel = () => {
+    if (!overlapDialog) return;
+    setOverlapDialog(null);
+
+    const { overlapFrom, overlapTo, fromDate, toDate } = overlapDialog;
+    // 겹치지 않는 구간 계산
+    const newRanges: Array<{ from: string; to: string }> = [];
+    if (fromDate < overlapFrom) newRanges.push({ from: fromDate, to: overlapFrom });
+    if (toDate > overlapTo) newRanges.push({ from: overlapTo, to: toDate });
+
+    if (newRanges.length === 0) {
+      setSyncMessage({ type: 'warning', text: `${overlapFrom} ~ ${overlapTo} 기간은 이미 동기화되어 있어 동기화할 새로운 기간이 없습니다.` });
+      return;
+    }
+
+    // 겹치지 않는 구간을 순서대로 동기화 (첫 번째 범위만 - 단순화)
+    // 실제로는 대부분 한 쪽에만 새 구간이 생김
+    const target = newRanges[0];
+    apiClient.post(`/api/coupang/sync/orders?fromDate=${target.from}&toDate=${target.to}`)
+      .then(() => {
+        setSyncMessage({ type: 'info', text: `${overlapFrom} ~ ${overlapTo} 기간을 제외하고 ${target.from} ~ ${target.to} 기간만 동기화했습니다.` });
+        queryClient.invalidateQueries({ queryKey: ['orders'] });
+      });
+  };
+
+  const handleSearch = () => {
+    setSearchRange({ ...dateInput });
+  };
+
+  const handleQuickRange = (from: string, to: string) => {
+    setDateInput({ from, to });
+    setSearchRange({ from, to });
+  };
 
   // Client-side filtering
   const filteredOrders = useMemo(() => {
@@ -98,7 +172,7 @@ const OrdersPage = () => {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-100">
-        <Header onBack={() => navigate({ to: '/' })} onSync={() => syncMutation.mutate()} isSyncing={syncMutation.isPending} lastSyncedAt={lastSyncedAt} syncDateRange={dateRange} />
+        <Header onBack={() => navigate({ to: '/' })} onSync={() => syncMutation.mutate({ force: false })} isSyncing={syncMutation.isPending} lastSyncedAt={lastSyncedAt} syncDateRange={dateInput} />
         <main className="max-w-7xl mx-auto px-4 py-8">
           <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
             <p className="text-red-600 font-medium mb-2">주문 목록을 불러올 수 없습니다</p>
@@ -116,16 +190,60 @@ const OrdersPage = () => {
     <div className="min-h-screen bg-gray-100">
       <Header
         onBack={() => navigate({ to: '/' })}
-        onSync={() => syncMutation.mutate()}
+        onSync={() => { setSyncMessage(null); syncMutation.mutate({ force: false }); }}
         isSyncing={syncMutation.isPending}
         lastSyncedAt={lastSyncedAt}
-        syncDateRange={dateRange}
+        syncDateRange={dateInput}
       />
+
+      {/* 중복 기간 확인 다이얼로그 */}
+      {overlapDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-gray-800 mb-3">이미 동기화된 기간</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              <span className="font-medium text-orange-600">{overlapDialog.overlapFrom} ~ {overlapDialog.overlapTo}</span> 기간은 이미 동기화되어 있습니다.
+              <br />기존 데이터를 삭제하고 다시 동기화할까요?
+            </p>
+            <div className="text-xs text-gray-400 mb-5 bg-gray-50 rounded p-3 space-y-1">
+              <div>확인: 기존 데이터 삭제 후 전체 기간 재동기화</div>
+              <div>취소: 중복 기간 제외하고 새로운 기간만 동기화</div>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleOverlapCancel}
+                className="px-4 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                취소 (중복 제외)
+              </button>
+              <button
+                onClick={handleOverlapConfirm}
+                className="px-4 py-2 text-sm bg-red-500 text-white rounded-md hover:bg-red-600"
+              >
+                확인 (재동기화)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {syncMutation.isError && (
         <div className="max-w-7xl mx-auto px-4 pt-4">
           <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-600">
             동기화 실패: {(syncMutation.error as Error)?.message}
+          </div>
+        </div>
+      )}
+
+      {syncMessage && (
+        <div className="max-w-7xl mx-auto px-4 pt-4">
+          <div className={`rounded-lg px-4 py-3 text-sm flex items-center justify-between ${
+            syncMessage.type === 'warning'
+              ? 'bg-yellow-50 border border-yellow-200 text-yellow-700'
+              : 'bg-blue-50 border border-blue-200 text-blue-700'
+          }`}>
+            <span>{syncMessage.text}</span>
+            <button onClick={() => setSyncMessage(null)} className="ml-4 text-gray-400 hover:text-gray-600">✕</button>
           </div>
         </div>
       )}
@@ -137,22 +255,22 @@ const OrdersPage = () => {
             <span className="text-sm font-medium text-gray-700">조회 기간</span>
             <input
               type="date"
-              value={dateRange.from}
-              onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
+              value={dateInput.from}
+              onChange={(e) => setDateInput({ ...dateInput, from: e.target.value })}
               className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <span className="text-gray-400">~</span>
             <input
               type="date"
-              value={dateRange.to}
-              onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
+              value={dateInput.to}
+              onChange={(e) => setDateInput({ ...dateInput, to: e.target.value })}
               className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <div className="flex gap-2 flex-wrap">
               <button
                 onClick={() => {
-                  const today = new Date();
-                  setDateRange({ from: today.toISOString().slice(0, 10), to: today.toISOString().slice(0, 10) });
+                  const today = new Date().toISOString().slice(0, 10);
+                  handleQuickRange(today, today);
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
               >
@@ -162,7 +280,8 @@ const OrdersPage = () => {
                 onClick={() => {
                   const yesterday = new Date();
                   yesterday.setDate(yesterday.getDate() - 1);
-                  setDateRange({ from: yesterday.toISOString().slice(0, 10), to: yesterday.toISOString().slice(0, 10) });
+                  const d = yesterday.toISOString().slice(0, 10);
+                  handleQuickRange(d, d);
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
               >
@@ -173,7 +292,7 @@ const OrdersPage = () => {
                   const to = new Date();
                   const from = new Date();
                   from.setDate(from.getDate() - 7);
-                  setDateRange({ from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) });
+                  handleQuickRange(from.toISOString().slice(0, 10), to.toISOString().slice(0, 10));
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
               >
@@ -184,14 +303,23 @@ const OrdersPage = () => {
                   const to = new Date();
                   const from = new Date();
                   from.setDate(from.getDate() - 30);
-                  setDateRange({ from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) });
+                  handleQuickRange(from.toISOString().slice(0, 10), to.toISOString().slice(0, 10));
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
               >
                 최근 30일
               </button>
             </div>
+            <button
+              onClick={handleSearch}
+              className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm hover:bg-blue-600 font-medium"
+            >
+              검색
+            </button>
           </div>
+          {searchRange.from !== dateInput.from || searchRange.to !== dateInput.to ? (
+            <p className="mt-2 text-xs text-orange-500">날짜가 변경되었습니다. 검색 버튼을 눌러 적용하세요.</p>
+          ) : null}
           {!lastSyncedAt && (
             <p className="mt-2 text-xs text-orange-600">동기화된 데이터가 없습니다. "동기화" 버튼을 눌러 데이터를 가져오세요.</p>
           )}

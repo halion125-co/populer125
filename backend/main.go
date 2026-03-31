@@ -231,7 +231,7 @@ func getProductItemsFromDB(c echo.Context) error {
 	})
 }
 
-// getInventoryFromDB: DB에서 재고 목록 반환 (페이지네이션 지원)
+// getInventoryFromDB: DB에서 재고 목록 반환 (페이지네이션 + 서버사이드 필터)
 func getInventoryFromDB(c echo.Context) error {
 	user := c.Get("user").(*middleware.UserContext)
 
@@ -244,6 +244,11 @@ func getInventoryFromDB(c echo.Context) error {
 		pageSize = 20
 	}
 
+	productName := c.QueryParam("productName")
+	optionName := c.QueryParam("optionName")
+	stockStatus := c.QueryParam("stockStatus") // "all" | "in_stock" | "out_of_stock"
+	mappedOnly := c.QueryParam("mappedOnly")   // "true" | "false"
+
 	type InventoryItem struct {
 		VendorItemID    int64  `json:"vendorItemId"`
 		ProductName     string `json:"productName"`
@@ -255,18 +260,49 @@ func getInventoryFromDB(c echo.Context) error {
 		SyncedAt        string `json:"syncedAt"`
 	}
 
-	// 전체 건수
-	var totalCount int
-	database.DB.QueryRow("SELECT COUNT(*) FROM inventory WHERE user_id = ?", user.UserID).Scan(&totalCount)
+	// 전체 통계 (필터 무관, 전체 기준)
+	var totalAll, totalInStock, totalOutOfStock int
+	database.DB.QueryRow("SELECT COUNT(*) FROM inventory WHERE user_id = ?", user.UserID).Scan(&totalAll)
+	database.DB.QueryRow("SELECT COUNT(*) FROM inventory WHERE user_id = ? AND stock_quantity > 0", user.UserID).Scan(&totalInStock)
+	totalOutOfStock = totalAll - totalInStock
 
+	// 필터 조건 조립
+	where := "WHERE user_id = ?"
+	args := []interface{}{user.UserID}
+
+	if mappedOnly == "true" {
+		where += " AND is_mapped = 1"
+	} else if mappedOnly == "false" {
+		where += " AND is_mapped = 0"
+	}
+	if productName != "" {
+		where += " AND product_name LIKE ?"
+		args = append(args, "%"+productName+"%")
+	}
+	if optionName != "" {
+		where += " AND item_name LIKE ?"
+		args = append(args, "%"+optionName+"%")
+	}
+	if stockStatus == "in_stock" {
+		where += " AND stock_quantity > 0"
+	} else if stockStatus == "out_of_stock" {
+		where += " AND stock_quantity = 0"
+	}
+
+	// 필터 적용 건수
+	var filteredCount int
+	database.DB.QueryRow("SELECT COUNT(*) FROM inventory "+where, args...).Scan(&filteredCount)
+
+	// 데이터 조회
+	queryArgs := append(args, pageSize, (page-1)*pageSize)
 	rows, err := database.DB.Query(`
 		SELECT vendor_item_id, product_name, item_name, status_name,
 		       stock_quantity, sales_last_30_days, is_mapped, synced_at
 		FROM inventory
-		WHERE user_id = ?
+		`+where+`
 		ORDER BY vendor_item_id DESC
 		LIMIT ? OFFSET ?
-	`, user.UserID, pageSize, (page-1)*pageSize)
+	`, queryArgs...)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
 	}
@@ -288,17 +324,20 @@ func getInventoryFromDB(c echo.Context) error {
 		items = []InventoryItem{}
 	}
 
-	totalPages := (totalCount + pageSize - 1) / pageSize
+	totalPages := (filteredCount + pageSize - 1) / pageSize
 	lastSynced := getLastSyncedAt(user.UserID, "inventory")
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"code":         "SUCCESS",
-		"data":         items,
-		"total":        totalCount,
-		"page":         page,
-		"pageSize":     pageSize,
-		"totalPages":   totalPages,
-		"lastSyncedAt": lastSynced,
+		"code":            "SUCCESS",
+		"data":            items,
+		"total":           filteredCount,
+		"totalAll":        totalAll,
+		"totalInStock":    totalInStock,
+		"totalOutOfStock": totalOutOfStock,
+		"page":            page,
+		"pageSize":        pageSize,
+		"totalPages":      totalPages,
+		"lastSyncedAt":    lastSynced,
 	})
 }
 
@@ -392,23 +431,24 @@ func getReturnsFromDB(c echo.Context) error {
 	status := c.QueryParam("status")
 
 	type ReturnItem struct {
-		ReceiptID       int64  `json:"receiptId"`
-		OrderID         int64  `json:"orderId"`
-		Status          string `json:"status"`
-		StatusName      string `json:"statusName"`
-		ProductName     string `json:"productName"`
-		VendorItemID    int64  `json:"vendorItemId"`
-		ReturnCount     int    `json:"returnCount"`
-		SalesQuantity   int    `json:"salesQuantity"`
-		ReturnReason    string `json:"returnReason"`
+		ReceiptID        int64  `json:"receiptId"`
+		OrderID          int64  `json:"orderId"`
+		Status           string `json:"status"`
+		StatusName       string `json:"statusName"`
+		ProductName      string `json:"productName"`
+		ItemName         string `json:"itemName"`
+		VendorItemID     int64  `json:"vendorItemId"`
+		ReturnCount      int    `json:"returnCount"`
+		SalesQuantity    int    `json:"salesQuantity"`
+		ReturnReason     string `json:"returnReason"`
 		ReturnReasonCode string `json:"returnReasonCode"`
-		CreatedAtAPI    string `json:"createdAtApi"`
-		CancelledAt     string `json:"cancelledAt"`
-		ReturnedAt      string `json:"returnedAt"`
-		SyncedAt        string `json:"syncedAt"`
+		CreatedAtAPI     string `json:"createdAtApi"`
+		CancelledAt      string `json:"cancelledAt"`
+		ReturnedAt       string `json:"returnedAt"`
+		SyncedAt         string `json:"syncedAt"`
 	}
 
-	query := "SELECT receipt_id, order_id, status, status_name, product_name, vendor_item_id, return_count, sales_quantity, return_reason, return_reason_code, created_at_api, cancelled_at, returned_at, synced_at FROM returns WHERE user_id = ?"
+	query := "SELECT receipt_id, order_id, status, status_name, product_name, COALESCE(item_name,''), vendor_item_id, return_count, sales_quantity, return_reason, return_reason_code, created_at_api, cancelled_at, returned_at, synced_at FROM returns WHERE user_id = ?"
 	args := []interface{}{user.UserID}
 
 	if createdAtFrom != "" {
@@ -435,7 +475,7 @@ func getReturnsFromDB(c echo.Context) error {
 	for rows.Next() {
 		var r ReturnItem
 		if err := rows.Scan(&r.ReceiptID, &r.OrderID, &r.Status, &r.StatusName,
-			&r.ProductName, &r.VendorItemID, &r.ReturnCount, &r.SalesQuantity,
+			&r.ProductName, &r.ItemName, &r.VendorItemID, &r.ReturnCount, &r.SalesQuantity,
 			&r.ReturnReason, &r.ReturnReasonCode, &r.CreatedAtAPI,
 			&r.CancelledAt, &r.ReturnedAt, &r.SyncedAt); err != nil {
 			continue
@@ -990,66 +1030,118 @@ func syncReturns(c echo.Context) error {
 		}
 	}
 	if fromStr == "" {
-		// 최초 동기화: 90일치
+		// 최초 동기화: 90일치 (31일 단위로 나눠서 요청)
 		fromStr = now.AddDate(0, 0, -90).Format("2006-01-02T00:00")
 	}
 
+	// 반품 API 최대 조회 기간: 31일 → 청크 단위로 분할 요청
 	path := fmt.Sprintf("/v2/providers/openapi/apis/api/v6/vendors/%s/returnRequests", user.VendorID)
-	query := fmt.Sprintf("searchType=timeFrame&createdAtFrom=%s&createdAtTo=%s", fromStr, toStr)
 
-	body, err := client.Request("GET", path, query)
+	fromTime, err := time.Parse("2006-01-02T15:04", fromStr)
 	if err != nil {
-		c.Logger().Errorf("syncReturns API failed: %v", err)
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "429") {
-			return c.JSON(http.StatusTooManyRequests, map[string]string{"error": "쿠팡 API 요청 한도 초과. 잠시 후 다시 시도해주세요."})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "날짜 파싱 실패: " + fromStr})
+	}
+	toTime, err := time.Parse("2006-01-02T15:04", toStr)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "날짜 파싱 실패: " + toStr})
 	}
 
-	type ReturnItem struct {
-		ReceiptId       int64  `json:"receiptId"`
-		OrderId         int64  `json:"orderId"`
-		Status          string `json:"status"`
-		StatusName      string `json:"statusName"`
-		ProductName     string `json:"productName"`
-		VendorItemId    int64  `json:"vendorItemId"`
-		ReturnCount     int    `json:"returnCount"`
-		SalesQuantity   int    `json:"salesQuantity"`
-		ReturnReason    string `json:"returnReason"`
-		ReturnReasonCode string `json:"returnReasonCode"`
-		CreatedAt       string `json:"createdAt"`
-		CancelledAt     string `json:"cancelledAt"`
-		ReturnedAt      string `json:"returnedAt"`
-		RawJson         string
-	}
 	type ReturnsResp struct {
-		Code string       `json:"code"`
+		Code string            `json:"code"`
 		Data []json.RawMessage `json:"data"`
 	}
 
-	var returnsResp ReturnsResp
-	if err := json.Unmarshal(body, &returnsResp); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "응답 파싱 실패"})
+	var allRawData []json.RawMessage
+	chunkFrom := fromTime
+	chunkIdx := 0
+	for chunkFrom.Before(toTime) {
+		if chunkIdx > 0 {
+			time.Sleep(500 * time.Millisecond)
+		}
+		chunkIdx++
+
+		chunkTo := chunkFrom.Add(31 * 24 * time.Hour)
+		if chunkTo.After(toTime) {
+			chunkTo = toTime
+		}
+
+		query := fmt.Sprintf("searchType=timeFrame&createdAtFrom=%s&createdAtTo=%s",
+			chunkFrom.Format("2006-01-02T15:04"),
+			chunkTo.Format("2006-01-02T15:04"),
+		)
+
+		body, err := client.Request("GET", path, query)
+		if err != nil {
+			c.Logger().Errorf("syncReturns API failed: %v", err)
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "429") {
+				return c.JSON(http.StatusTooManyRequests, map[string]string{"error": "쿠팡 API 요청 한도 초과. 잠시 후 다시 시도해주세요."})
+			}
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
+		var chunk ReturnsResp
+		if err := json.Unmarshal(body, &chunk); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "응답 파싱 실패"})
+		}
+		allRawData = append(allRawData, chunk.Data...)
+
+		chunkFrom = chunkTo
+	}
+
+	type ReturnItem struct {
+		ReceiptId        int64  `json:"receiptId"`
+		OrderId          int64  `json:"orderId"`
+		Status           string `json:"status"`
+		StatusName       string `json:"statusName"`
+		ProductName      string `json:"productName"`
+		VendorItemId     int64  `json:"vendorItemId"`
+		ReturnCount      int    `json:"returnCount"`
+		SalesQuantity    int    `json:"salesQuantity"`
+		ReturnReason     string `json:"returnReason"`
+		ReturnReasonCode string `json:"returnReasonCode"`
+		CreatedAt        string `json:"createdAt"`
+		CancelledAt      string `json:"cancelledAt"`
+		ReturnedAt       string `json:"returnedAt"`
+		RawJson          string
+	}
+
+	// product_items에서 vendorItemId → item_name 매핑 로드
+	itemNameMap := make(map[int64]string)
+	piRows, err := database.DB.Query(
+		`SELECT vendor_item_id, item_name FROM product_items WHERE user_id = ? AND vendor_item_id > 0`,
+		user.UserID,
+	)
+	if err == nil {
+		for piRows.Next() {
+			var vid int64
+			var iname string
+			if piRows.Scan(&vid, &iname) == nil {
+				itemNameMap[vid] = iname
+			}
+		}
+		piRows.Close()
 	}
 
 	count := 0
-	for _, raw := range returnsResp.Data {
+	for _, raw := range allRawData {
 		var r ReturnItem
 		if err := json.Unmarshal(raw, &r); err != nil {
 			continue
 		}
 		r.RawJson = string(raw)
+		itemName := itemNameMap[r.VendorItemId]
 
 		_, err := database.DB.Exec(`
 			INSERT INTO returns (user_id, receipt_id, order_id, status, status_name, product_name,
-				vendor_item_id, return_count, sales_quantity, return_reason, return_reason_code,
+				item_name, vendor_item_id, return_count, sales_quantity, return_reason, return_reason_code,
 				created_at_api, cancelled_at, returned_at, raw_json, synced_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 			ON CONFLICT(user_id, receipt_id) DO UPDATE SET
 				status = excluded.status,
 				status_name = excluded.status_name,
 				product_name = excluded.product_name,
+				item_name = excluded.item_name,
 				vendor_item_id = excluded.vendor_item_id,
 				return_count = excluded.return_count,
 				sales_quantity = excluded.sales_quantity,
@@ -1061,7 +1153,7 @@ func syncReturns(c echo.Context) error {
 				raw_json = excluded.raw_json,
 				synced_at = CURRENT_TIMESTAMP
 		`, user.UserID, r.ReceiptId, r.OrderId, r.Status, r.StatusName, r.ProductName,
-			r.VendorItemId, r.ReturnCount, r.SalesQuantity, r.ReturnReason, r.ReturnReasonCode,
+			itemName, r.VendorItemId, r.ReturnCount, r.SalesQuantity, r.ReturnReason, r.ReturnReasonCode,
 			r.CreatedAt, r.CancelledAt, r.ReturnedAt, r.RawJson)
 		if err != nil {
 			c.Logger().Errorf("returns upsert failed: %v", err)

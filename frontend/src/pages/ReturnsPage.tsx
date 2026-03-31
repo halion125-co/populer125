@@ -72,7 +72,13 @@ const ReturnsPage = () => {
 
   const formatSyncTime = (t: string) => {
     if (!t) return null;
-    return t.replace('T', ' ').slice(0, 19);
+    try {
+      const d = new Date(t);
+      const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+      return kst.toISOString().slice(0, 16).replace('T', ' ');
+    } catch {
+      return t.slice(0, 16).replace('T', ' ');
+    }
   };
 
   // 상태 배지
@@ -253,7 +259,7 @@ const ReturnsPage = () => {
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">접수번호</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">주문번호</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">상태</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">상품명</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">상품명 / 옵션명</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">옵션ID</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">반품수량</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">반품사유</th>
@@ -271,6 +277,9 @@ const ReturnsPage = () => {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700">
                         <div className="max-w-xs truncate">{item.productName || '-'}</div>
+                        {item.itemName && (
+                          <div className="max-w-xs truncate text-xs text-gray-400 mt-0.5">{item.itemName}</div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap font-mono">{item.vendorItemId || '-'}</td>
                       <td className="px-4 py-3 text-sm text-gray-700 text-center">{item.returnCount || item.quantity || '-'}</td>

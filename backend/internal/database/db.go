@@ -209,6 +209,10 @@ func createTables() error {
 		return err
 	}
 
+	if err := migrateReturns(); err != nil {
+		return err
+	}
+
 	// 주문 동기화 날짜 범위 이력 테이블
 	_, err = DB.Exec(`
 		CREATE TABLE IF NOT EXISTS order_sync_ranges (
@@ -224,6 +228,11 @@ func createTables() error {
 
 func migrateInventory() error {
 	DB.Exec("ALTER TABLE inventory ADD COLUMN seller_product_id INTEGER DEFAULT 0")
+	return nil
+}
+
+func migrateReturns() error {
+	DB.Exec("ALTER TABLE returns ADD COLUMN item_name TEXT DEFAULT ''")
 	return nil
 }
 

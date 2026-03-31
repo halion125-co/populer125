@@ -1,6 +1,8 @@
-import { useState, useContext } from 'react';
+import { useState, useContext, useEffect } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { AuthContext } from '../contexts/AuthContext';
+
+const SAVED_EMAIL_KEY = 'saved_login_email';
 
 const LoginPage = () => {
   const auth = useContext(AuthContext);
@@ -9,11 +11,27 @@ const LoginPage = () => {
   const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [saveId, setSaveId] = useState(false);
+
+  // 저장된 이메일 불러오기
+  useEffect(() => {
+    const saved = localStorage.getItem(SAVED_EMAIL_KEY);
+    if (saved) {
+      setForm(f => ({ ...f, email: saved }));
+      setSaveId(true);
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
+
+    if (saveId) {
+      localStorage.setItem(SAVED_EMAIL_KEY, form.email);
+    } else {
+      localStorage.removeItem(SAVED_EMAIL_KEY);
+    }
 
     try {
       await auth!.login(form);
@@ -56,6 +74,19 @@ const LoginPage = () => {
               placeholder="••••••"
               required
             />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="saveId"
+              checked={saveId}
+              onChange={e => setSaveId(e.target.checked)}
+              className="w-4 h-4 text-blue-500 border-gray-300 rounded cursor-pointer"
+            />
+            <label htmlFor="saveId" className="text-sm text-gray-600 cursor-pointer select-none">
+              ID 저장
+            </label>
           </div>
 
           {error && (

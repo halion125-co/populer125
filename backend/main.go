@@ -1017,10 +1017,13 @@ func syncReturns(c echo.Context) error {
 	now := time.Now()
 	toStr := now.Format("2006-01-02T15:04")
 
-	// 마지막 동기화 시각 기반으로 from 계산
+	// DB에 실제 데이터가 있는 경우만 마지막 동기화 시각부터 조회
+	var returnCount int
+	database.DB.QueryRow("SELECT COUNT(*) FROM returns WHERE user_id = ?", user.UserID).Scan(&returnCount)
+
 	lastSynced := getLastSyncedAt(user.UserID, "returns")
 	var fromStr string
-	if lastSynced != "" {
+	if lastSynced != "" && returnCount > 0 {
 		t, err := time.Parse("2006-01-02T15:04:05Z", lastSynced)
 		if err != nil {
 			t, err = time.Parse("2006-01-02T15:04:05", lastSynced)
@@ -1030,7 +1033,7 @@ func syncReturns(c echo.Context) error {
 		}
 	}
 	if fromStr == "" {
-		// 최초 동기화: 90일치 (31일 단위로 나눠서 요청)
+		// 최초 동기화 or 데이터 없음: 90일치 (31일 단위로 나눠서 요청)
 		fromStr = now.AddDate(0, 0, -90).Format("2006-01-02T00:00")
 	}
 
@@ -1047,7 +1050,7 @@ func syncReturns(c echo.Context) error {
 	}
 
 	type ReturnsResp struct {
-		Code string            `json:"code"`
+		Code json.RawMessage   `json:"code"`
 		Data []json.RawMessage `json:"data"`
 	}
 
@@ -1082,55 +1085,72 @@ func syncReturns(c echo.Context) error {
 
 		var chunk ReturnsResp
 		if err := json.Unmarshal(body, &chunk); err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "응답 파싱 실패"})
+			c.Logger().Errorf("syncReturns parse failed: %s", string(body))
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "응답 파싱 실패: " + err.Error()})
 		}
+		c.Logger().Errorf("syncReturns chunk %d items=%d body=%.300s", chunkIdx, len(chunk.Data), string(body))
 		allRawData = append(allRawData, chunk.Data...)
 
 		chunkFrom = chunkTo
 	}
 
-	type ReturnItem struct {
-		ReceiptId        int64  `json:"receiptId"`
-		OrderId          int64  `json:"orderId"`
-		Status           string `json:"status"`
-		StatusName       string `json:"statusName"`
-		ProductName      string `json:"productName"`
-		VendorItemId     int64  `json:"vendorItemId"`
-		ReturnCount      int    `json:"returnCount"`
-		SalesQuantity    int    `json:"salesQuantity"`
-		ReturnReason     string `json:"returnReason"`
-		ReturnReasonCode string `json:"returnReasonCode"`
-		CreatedAt        string `json:"createdAt"`
-		CancelledAt      string `json:"cancelledAt"`
-		ReturnedAt       string `json:"returnedAt"`
-		RawJson          string
+	// 실제 쿠팡 API 응답 구조
+	type ReturnItemDetail struct {
+		VendorItemId      int64  `json:"vendorItemId"`
+		VendorItemName    string `json:"vendorItemName"`
+		SellerProductId   int64  `json:"sellerProductId"`
+		SellerProductName string `json:"sellerProductName"`
+		CancelCount       int    `json:"cancelCount"`
+		PurchaseCount     int    `json:"purchaseCount"`
+	}
+	type ReturnReceipt struct {
+		ReceiptId       int64              `json:"receiptId"`
+		OrderId         int64              `json:"orderId"`
+		ReceiptStatus   string             `json:"receiptStatus"`
+		CreatedAt       string             `json:"createdAt"`
+		ModifiedAt      string             `json:"modifiedAt"`
+		CancelReason    string             `json:"cancelReason"`
+		ReasonCode      string             `json:"reasonCode"`
+		ReasonCodeText  string             `json:"reasonCodeText"`
+		CancelCountSum  int                `json:"cancelCountSum"`
+		ReturnItems     []ReturnItemDetail `json:"returnItems"`
 	}
 
-	// product_items에서 vendorItemId → item_name 매핑 로드
-	itemNameMap := make(map[int64]string)
-	piRows, err := database.DB.Query(
-		`SELECT vendor_item_id, item_name FROM product_items WHERE user_id = ? AND vendor_item_id > 0`,
-		user.UserID,
-	)
-	if err == nil {
-		for piRows.Next() {
-			var vid int64
-			var iname string
-			if piRows.Scan(&vid, &iname) == nil {
-				itemNameMap[vid] = iname
-			}
-		}
-		piRows.Close()
+	// receiptStatus 코드 → 표시용 상태값 매핑
+	statusCodeMap := map[string]string{
+		"RELEASE_STOP_UNCHECKED": "RU",
+		"RETURNS_UNCHECKED":      "UC",
+		"VENDOR_WAREHOUSE_CONFIRM": "UC",
+		"REQUEST_COUPANG_CHECK":  "PR",
+		"RETURNS_COMPLETED":      "CC",
 	}
 
 	count := 0
 	for _, raw := range allRawData {
-		var r ReturnItem
+		var r ReturnReceipt
 		if err := json.Unmarshal(raw, &r); err != nil {
 			continue
 		}
-		r.RawJson = string(raw)
-		itemName := itemNameMap[r.VendorItemId]
+		rawStr := string(raw)
+		statusCode := statusCodeMap[r.ReceiptStatus]
+		if statusCode == "" {
+			statusCode = r.ReceiptStatus
+		}
+
+		// returnItems에서 첫 번째 아이템 정보 사용
+		var vendorItemId int64
+		var productName, itemName string
+		var returnCount int
+		if len(r.ReturnItems) > 0 {
+			first := r.ReturnItems[0]
+			vendorItemId = first.VendorItemId
+			productName = first.SellerProductName
+			itemName = first.VendorItemName
+			returnCount = first.CancelCount
+		}
+		if returnCount == 0 {
+			returnCount = r.CancelCountSum
+		}
 
 		_, err := database.DB.Exec(`
 			INSERT INTO returns (user_id, receipt_id, order_id, status, status_name, product_name,
@@ -1152,9 +1172,9 @@ func syncReturns(c echo.Context) error {
 				returned_at = excluded.returned_at,
 				raw_json = excluded.raw_json,
 				synced_at = CURRENT_TIMESTAMP
-		`, user.UserID, r.ReceiptId, r.OrderId, r.Status, r.StatusName, r.ProductName,
-			itemName, r.VendorItemId, r.ReturnCount, r.SalesQuantity, r.ReturnReason, r.ReturnReasonCode,
-			r.CreatedAt, r.CancelledAt, r.ReturnedAt, r.RawJson)
+		`, user.UserID, r.ReceiptId, r.OrderId, statusCode, r.ReceiptStatus, productName,
+			itemName, vendorItemId, returnCount, 0, r.CancelReason, r.ReasonCode,
+			r.CreatedAt, r.ModifiedAt, r.ModifiedAt, rawStr)
 		if err != nil {
 			c.Logger().Errorf("returns upsert failed: %v", err)
 			continue

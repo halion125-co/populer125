@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { apiClient } from '../lib/api';
@@ -22,24 +22,39 @@ const initialFilters: Filters = {
 
 type SortOrder = 'none' | 'asc' | 'desc';
 
+interface InventoryApiResponse extends InventoryResponse {
+  totalAll: number;
+  totalInStock: number;
+  totalOutOfStock: number;
+}
+
 const InventoryPage = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabType>('normal');
-  const [filters, setFilters] = useState<Filters>(initialFilters);
   const [showFilters, setShowFilters] = useState(false);
   const [sortOrder, setSortOrder] = useState<SortOrder>('none');
   const [page, setPage] = useState(1);
 
-  const toggleSort = () => {
-    setSortOrder(prev => prev === 'none' ? 'asc' : prev === 'asc' ? 'desc' : 'none');
-  };
+  // 입력 중인 필터 (검색 버튼 누르기 전)
+  const [filterInput, setFilterInput] = useState<Filters>(initialFilters);
+  // 실제 API에 사용되는 필터
+  const [appliedFilters, setAppliedFilters] = useState<Filters>(initialFilters);
+
+  const mappedOnly = activeTab === 'normal' ? 'true' : 'false';
 
   const { data: apiResponse, isLoading, isFetching, error, refetch } = useQuery({
-    queryKey: ['inventory', page],
+    queryKey: ['inventory', page, mappedOnly, appliedFilters, sortOrder],
     queryFn: async () => {
-      const response = await apiClient.get<InventoryResponse>('/api/coupang/inventory', {
-        params: { page, pageSize: PAGE_SIZE },
+      const response = await apiClient.get<InventoryApiResponse>('/api/coupang/inventory', {
+        params: {
+          page,
+          pageSize: PAGE_SIZE,
+          mappedOnly,
+          productName: appliedFilters.productName || undefined,
+          optionName: appliedFilters.optionName || undefined,
+          stockStatus: appliedFilters.stockStatus !== 'all' ? appliedFilters.stockStatus : undefined,
+        },
       });
       return response.data;
     },
@@ -57,40 +72,38 @@ const InventoryPage = () => {
   const inventoryItems = apiResponse?.data || [];
   const totalPages = apiResponse?.totalPages || 1;
   const total = apiResponse?.total || 0;
+  const totalAll = apiResponse?.totalAll ?? 0;
+  const totalInStock = apiResponse?.totalInStock ?? 0;
+  const totalOutOfStock = apiResponse?.totalOutOfStock ?? 0;
   const lastSyncedAt = apiResponse?.lastSyncedAt || '';
 
-  // 탭별 아이템 분리
-  const normalItems = useMemo(() => inventoryItems.filter(item => item.isMapped), [inventoryItems]);
-  const unmappedItems = useMemo(() => inventoryItems.filter(item => !item.isMapped), [inventoryItems]);
+  const hasActiveFilters = appliedFilters.productName !== '' || appliedFilters.optionName !== '' || appliedFilters.stockStatus !== 'all';
+  const hasPendingChanges =
+    filterInput.productName !== appliedFilters.productName ||
+    filterInput.optionName !== appliedFilters.optionName ||
+    filterInput.stockStatus !== appliedFilters.stockStatus;
 
-  const currentTabItems = activeTab === 'normal' ? normalItems : unmappedItems;
+  const toggleSort = () => {
+    setSortOrder(prev => prev === 'none' ? 'asc' : prev === 'asc' ? 'desc' : 'none');
+  };
 
-  const filteredItems = useMemo(() => {
-    const filtered = currentTabItems.filter((item: InventoryItem) => {
-      if (filters.productName && !item.productName.toLowerCase().includes(filters.productName.toLowerCase())) {
-        return false;
-      }
-      if (filters.optionName && !item.itemName.toLowerCase().includes(filters.optionName.toLowerCase())) {
-        return false;
-      }
-      if (filters.stockStatus !== 'all') {
-        const stockQty = item.stockQuantity || 0;
-        if (filters.stockStatus === 'in_stock' && stockQty <= 0) return false;
-        if (filters.stockStatus === 'out_of_stock' && stockQty > 0) return false;
-      }
-      return true;
-    });
-    if (sortOrder === 'none') return filtered;
-    return [...filtered].sort((a, b) => {
-      const cmp = (a.productName || '').localeCompare(b.productName || '', 'ko');
-      return sortOrder === 'asc' ? cmp : -cmp;
-    });
-  }, [currentTabItems, filters, sortOrder]);
+  const sortedItems = sortOrder === 'none'
+    ? inventoryItems
+    : [...inventoryItems].sort((a, b) => {
+        const cmp = (a.productName || '').localeCompare(b.productName || '', 'ko');
+        return sortOrder === 'asc' ? cmp : -cmp;
+      });
 
-  const hasActiveFilters = filters.productName !== '' || filters.optionName !== '' || filters.stockStatus !== 'all';
+  const handleSearch = () => {
+    setAppliedFilters({ ...filterInput });
+    setPage(1);
+  };
 
-  const inStockCount = useMemo(() => currentTabItems.filter(item => (item.stockQuantity || 0) > 0).length, [currentTabItems]);
-  const outOfStockCount = currentTabItems.length - inStockCount;
+  const handleResetFilters = () => {
+    setFilterInput(initialFilters);
+    setAppliedFilters(initialFilters);
+    setPage(1);
+  };
 
   const handlePageChange = (newPage: number) => {
     setPage(newPage);
@@ -99,8 +112,10 @@ const InventoryPage = () => {
 
   const handleTabChange = (tab: TabType) => {
     setActiveTab(tab);
-    setFilters(initialFilters);
+    setFilterInput(initialFilters);
+    setAppliedFilters(initialFilters);
     setSortOrder('none');
+    setPage(1);
   };
 
   if (isLoading) {
@@ -144,6 +159,22 @@ const InventoryPage = () => {
       )}
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {/* 전체 통계 (필터 무관) */}
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-white p-4 rounded-lg shadow">
+            <p className="text-sm text-gray-500">전체 SKU</p>
+            <p className="text-2xl font-bold text-blue-600">{totalAll.toLocaleString()}</p>
+          </div>
+          <div className="bg-white p-4 rounded-lg shadow">
+            <p className="text-sm text-gray-500">재고 있음</p>
+            <p className="text-2xl font-bold text-green-600">{totalInStock.toLocaleString()}</p>
+          </div>
+          <div className="bg-white p-4 rounded-lg shadow">
+            <p className="text-sm text-gray-500">품절</p>
+            <p className="text-2xl font-bold text-red-600">{totalOutOfStock.toLocaleString()}</p>
+          </div>
+        </div>
+
         {/* 탭 */}
         <div className="mb-6 border-b border-gray-200 bg-white rounded-t-lg shadow-sm">
           <nav className="flex">
@@ -156,11 +187,6 @@ const InventoryPage = () => {
               }`}
             >
               정상 재고
-              <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${
-                activeTab === 'normal' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
-              }`}>
-                {normalItems.length}
-              </span>
             </button>
             <button
               onClick={() => handleTabChange('unmapped')}
@@ -171,32 +197,11 @@ const InventoryPage = () => {
               }`}
             >
               미매핑 재고
-              <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${
-                activeTab === 'unmapped' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'
-              }`}>
-                {unmappedItems.length}
-              </span>
             </button>
           </nav>
         </div>
 
-        {/* Stats */}
-        <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white p-4 rounded-lg shadow">
-            <p className="text-sm text-gray-500">총 옵션(SKU) 수</p>
-            <p className="text-2xl font-bold text-blue-600">{total}</p>
-          </div>
-          <div className="bg-white p-4 rounded-lg shadow">
-            <p className="text-sm text-gray-500">이 페이지 재고 있음</p>
-            <p className="text-2xl font-bold text-green-600">{inStockCount}</p>
-          </div>
-          <div className="bg-white p-4 rounded-lg shadow">
-            <p className="text-sm text-gray-500">이 페이지 품절</p>
-            <p className="text-2xl font-bold text-red-600">{outOfStockCount}</p>
-          </div>
-        </div>
-
-        {/* Search Filters */}
+        {/* 검색 조건 (정상 재고 탭만) */}
         {activeTab === 'normal' && (
           <div className="mb-6 bg-white rounded-lg shadow">
             <button
@@ -206,9 +211,7 @@ const InventoryPage = () => {
               <span className="font-medium text-gray-700">
                 검색 조건
                 {hasActiveFilters && (
-                  <span className="ml-2 px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full">
-                    필터 적용중
-                  </span>
+                  <span className="ml-2 px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full">필터 적용중</span>
                 )}
               </span>
               <span className="text-gray-400">{showFilters ? '▲' : '▼'}</span>
@@ -221,8 +224,9 @@ const InventoryPage = () => {
                     <label className="block text-sm font-medium text-gray-600 mb-1">상품명</label>
                     <input
                       type="text"
-                      value={filters.productName}
-                      onChange={e => setFilters({ ...filters, productName: e.target.value })}
+                      value={filterInput.productName}
+                      onChange={e => setFilterInput({ ...filterInput, productName: e.target.value })}
+                      onKeyDown={e => e.key === 'Enter' && handleSearch()}
                       placeholder="상품명 검색..."
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
@@ -231,8 +235,9 @@ const InventoryPage = () => {
                     <label className="block text-sm font-medium text-gray-600 mb-1">옵션명</label>
                     <input
                       type="text"
-                      value={filters.optionName}
-                      onChange={e => setFilters({ ...filters, optionName: e.target.value })}
+                      value={filterInput.optionName}
+                      onChange={e => setFilterInput({ ...filterInput, optionName: e.target.value })}
+                      onKeyDown={e => e.key === 'Enter' && handleSearch()}
                       placeholder="옵션명 검색..."
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
@@ -240,8 +245,8 @@ const InventoryPage = () => {
                   <div>
                     <label className="block text-sm font-medium text-gray-600 mb-1">재고 상태</label>
                     <select
-                      value={filters.stockStatus}
-                      onChange={e => setFilters({ ...filters, stockStatus: e.target.value as Filters['stockStatus'] })}
+                      value={filterInput.stockStatus}
+                      onChange={e => setFilterInput({ ...filterInput, stockStatus: e.target.value as Filters['stockStatus'] })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
                       <option value="all">전체</option>
@@ -250,34 +255,47 @@ const InventoryPage = () => {
                     </select>
                   </div>
                 </div>
-
-                {hasActiveFilters && (
-                  <div className="mt-4 flex items-center justify-between">
+                <div className="mt-4 flex items-center justify-between">
+                  {hasPendingChanges && (
+                    <p className="text-xs text-orange-500">검색 버튼을 눌러 적용하세요.</p>
+                  )}
+                  {!hasPendingChanges && hasActiveFilters && (
                     <p className="text-sm text-gray-500">
-                      이 페이지 검색 결과: <span className="font-semibold text-blue-600">{filteredItems.length}</span>건
+                      검색 결과: <span className="font-semibold text-blue-600">{total.toLocaleString()}</span>건
                     </p>
+                  )}
+                  {!hasPendingChanges && !hasActiveFilters && <span />}
+                  <div className="flex gap-2 ml-auto">
+                    {hasActiveFilters && (
+                      <button
+                        onClick={handleResetFilters}
+                        className="px-4 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+                      >
+                        초기화
+                      </button>
+                    )}
                     <button
-                      onClick={() => setFilters(initialFilters)}
-                      className="px-4 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+                      onClick={handleSearch}
+                      className="px-4 py-1.5 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600"
                     >
-                      초기화
+                      검색
                     </button>
                   </div>
-                )}
+                </div>
               </div>
             )}
           </div>
         )}
 
         {/* 미매핑 탭 안내 */}
-        {activeTab === 'unmapped' && unmappedItems.length > 0 && (
+        {activeTab === 'unmapped' && total > 0 && (
           <div className="mb-4 bg-orange-50 border border-orange-200 rounded-lg px-4 py-3 text-sm text-orange-700">
             상품명/옵션명이 조회되지 않는 재고입니다. 반품·삭제·판매종료 등으로 상품 정보가 없는 옵션ID입니다.
           </div>
         )}
 
         {/* Inventory Table */}
-        {filteredItems.length === 0 ? (
+        {sortedItems.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-12 text-center">
             <p className="text-gray-500 text-lg">
               {activeTab === 'unmapped'
@@ -321,7 +339,7 @@ const InventoryPage = () => {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredItems.map((item: InventoryItem) => (
+                  {sortedItems.map((item: InventoryItem) => (
                     <InventoryItemRow key={item.vendorItemId} item={item} />
                   ))}
                 </tbody>
@@ -331,24 +349,14 @@ const InventoryPage = () => {
             {/* Pagination */}
             <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between bg-gray-50">
               <p className="text-sm text-gray-500">
-                전체 <span className="font-semibold">{total}</span>개 중{' '}
+                전체 <span className="font-semibold">{total.toLocaleString()}</span>개 중{' '}
                 {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)}번째
               </p>
               <div className="flex items-center gap-1">
-                <button
-                  onClick={() => handlePageChange(1)}
-                  disabled={page === 1}
-                  className="px-2 py-1 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-100 disabled:cursor-not-allowed"
-                >
-                  «
-                </button>
-                <button
-                  onClick={() => handlePageChange(page - 1)}
-                  disabled={page === 1}
-                  className="px-3 py-1 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-100 disabled:cursor-not-allowed"
-                >
-                  이전
-                </button>
+                <button onClick={() => handlePageChange(1)} disabled={page === 1}
+                  className="px-2 py-1 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-100 disabled:cursor-not-allowed">«</button>
+                <button onClick={() => handlePageChange(page - 1)} disabled={page === 1}
+                  className="px-3 py-1 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-100 disabled:cursor-not-allowed">이전</button>
 
                 {Array.from({ length: totalPages }, (_, i) => i + 1)
                   .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 2)
@@ -361,34 +369,19 @@ const InventoryPage = () => {
                     p === '...' ? (
                       <span key={`dot-${idx}`} className="px-2 py-1 text-sm text-gray-400">…</span>
                     ) : (
-                      <button
-                        key={p}
-                        onClick={() => handlePageChange(p as number)}
+                      <button key={p} onClick={() => handlePageChange(p as number)}
                         className={`px-3 py-1 text-sm rounded border ${
-                          p === page
-                            ? 'bg-blue-500 text-white border-blue-500'
-                            : 'border-gray-300 hover:bg-gray-100'
-                        }`}
-                      >
+                          p === page ? 'bg-blue-500 text-white border-blue-500' : 'border-gray-300 hover:bg-gray-100'
+                        }`}>
                         {p}
                       </button>
                     )
                   )}
 
-                <button
-                  onClick={() => handlePageChange(page + 1)}
-                  disabled={page === totalPages}
-                  className="px-3 py-1 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-100 disabled:cursor-not-allowed"
-                >
-                  다음
-                </button>
-                <button
-                  onClick={() => handlePageChange(totalPages)}
-                  disabled={page === totalPages}
-                  className="px-2 py-1 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-100 disabled:cursor-not-allowed"
-                >
-                  »
-                </button>
+                <button onClick={() => handlePageChange(page + 1)} disabled={page === totalPages}
+                  className="px-3 py-1 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-100 disabled:cursor-not-allowed">다음</button>
+                <button onClick={() => handlePageChange(totalPages)} disabled={page === totalPages}
+                  className="px-2 py-1 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-100 disabled:cursor-not-allowed">»</button>
               </div>
             </div>
           </div>
@@ -411,7 +404,13 @@ function Header({
 }) {
   const formatSyncTime = (t: string) => {
     if (!t) return null;
-    return t.replace('T', ' ').slice(0, 19);
+    try {
+      const d = new Date(t);
+      const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+      return kst.toISOString().slice(0, 16).replace('T', ' ');
+    } catch {
+      return t.slice(0, 16).replace('T', ' ');
+    }
   };
 
   return (
@@ -444,9 +443,7 @@ function InventoryItemRow({ item }: { item: InventoryItem }) {
 
   return (
     <tr className="hover:bg-gray-50">
-      <td className="px-4 py-3 text-sm text-gray-500 font-mono whitespace-nowrap">
-        {item.vendorItemId}
-      </td>
+      <td className="px-4 py-3 text-sm text-gray-500 font-mono whitespace-nowrap">{item.vendorItemId}</td>
       <td className="px-4 py-3 text-sm text-gray-900">
         {item.productName
           ? <div className="max-w-xs truncate">{item.productName}</div>
@@ -466,24 +463,13 @@ function InventoryItemRow({ item }: { item: InventoryItem }) {
         {item.salesLast30Days || 0}
       </td>
       <td className="px-4 py-3 text-center">
-        <StockStatusBadge isInStock={isInStock} />
+        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+          isInStock ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+        }`}>
+          {isInStock ? '재고 있음' : '품절'}
+        </span>
       </td>
     </tr>
-  );
-}
-
-function StockStatusBadge({ isInStock }: { isInStock: boolean }) {
-  if (isInStock) {
-    return (
-      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-        재고 있음
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-      품절
-    </span>
   );
 }
 

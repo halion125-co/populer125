@@ -1,14 +1,46 @@
 import { useContext } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AuthContext } from '../contexts/AuthContext';
 import { useNavigate } from '@tanstack/react-router';
+import { apiClient } from '../lib/api';
+
+interface SyncInfo {
+  dataType: string;
+  lastSyncedAt: string;
+  recordCount: number;
+}
+
+interface SyncStatusResponse {
+  code: string;
+  data: { [key: string]: SyncInfo };
+}
 
 const DashboardPage = () => {
   const auth = useContext(AuthContext);
   const navigate = useNavigate();
 
+  const { data: syncStatus } = useQuery({
+    queryKey: ['syncStatus'],
+    queryFn: async () => {
+      const res = await apiClient.get<SyncStatusResponse>('/api/coupang/sync/status');
+      return res.data.data;
+    },
+  });
+
   const handleLogout = () => {
     auth!.logout();
     navigate({ to: '/login' });
+  };
+
+  const formatSyncTime = (t: string) => {
+    if (!t) return '동기화 없음';
+    try {
+      const d = new Date(t);
+      const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+      return kst.toISOString().slice(0, 16).replace('T', ' ');
+    } catch {
+      return t.slice(0, 16).replace('T', ' ');
+    }
   };
 
   return (
@@ -43,15 +75,30 @@ const DashboardPage = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-white p-6 rounded-lg shadow">
             <h3 className="text-lg font-semibold text-gray-700 mb-2">상품</h3>
-            <p className="text-3xl font-bold text-blue-600">-</p>
+            <p className="text-3xl font-bold text-blue-600">
+              {syncStatus?.products?.recordCount ?? '-'}
+            </p>
+            <p className="text-xs text-gray-400 mt-2">
+              최종 동기화: {formatSyncTime(syncStatus?.products?.lastSyncedAt ?? '')}
+            </p>
           </div>
           <div className="bg-white p-6 rounded-lg shadow">
             <h3 className="text-lg font-semibold text-gray-700 mb-2">주문</h3>
-            <p className="text-3xl font-bold text-green-600">-</p>
+            <p className="text-3xl font-bold text-green-600">
+              {syncStatus?.orders?.recordCount ?? '-'}
+            </p>
+            <p className="text-xs text-gray-400 mt-2">
+              최종 동기화: {formatSyncTime(syncStatus?.orders?.lastSyncedAt ?? '')}
+            </p>
           </div>
           <div className="bg-white p-6 rounded-lg shadow">
             <h3 className="text-lg font-semibold text-gray-700 mb-2">재고</h3>
-            <p className="text-3xl font-bold text-orange-600">-</p>
+            <p className="text-3xl font-bold text-orange-600">
+              {syncStatus?.inventory?.recordCount ?? '-'}
+            </p>
+            <p className="text-xs text-gray-400 mt-2">
+              최종 동기화: {formatSyncTime(syncStatus?.inventory?.lastSyncedAt ?? '')}
+            </p>
           </div>
         </div>
 
@@ -82,14 +129,7 @@ const DashboardPage = () => {
                 📊 재고 관리
               </button>
             </li>
-            <li>
-              <button
-                onClick={() => navigate({ to: '/returns' })}
-                className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-md cursor-pointer"
-              >
-                🔄 반품 관리
-              </button>
-            </li>
+
             <li>
               <button
                 onClick={() => navigate({ to: '/profile' })}

@@ -458,7 +458,13 @@ function Header({
 }) {
   const formatSyncTime = (t: string) => {
     if (!t) return null;
-    return t.replace('T', ' ').slice(0, 19);
+    try {
+      const d = new Date(t);
+      const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+      return kst.toISOString().slice(0, 16).replace('T', ' ');
+    } catch {
+      return t.slice(0, 16).replace('T', ' ');
+    }
   };
 
   return (

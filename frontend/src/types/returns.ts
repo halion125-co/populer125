@@ -5,6 +5,7 @@ export interface ReturnItem {
   statusName?: string;
   status?: string;
   productName?: string;
+  itemName?: string;
   vendorItemId?: number;
   quantity?: number;
   returnCount?: number;

@@ -65,6 +65,14 @@ func main() {
 	// 테스트
 	api.GET("/coupang/test", testCoupangAPI)
 
+	// 배치 관리
+	api.GET("/batch/jobs", getBatchJobs)
+	api.POST("/batch/jobs/:jobType/run", runBatchJob)
+	api.GET("/batch/logs", getBatchLogs)
+
+	// 스케줄러 시작 (매일 KST 00:00)
+	go startScheduler(e)
+
 	port := fmt.Sprintf(":%s", cfg.ServerPort)
 	e.Logger.Fatal(e.Start(port))
 }
@@ -345,8 +353,26 @@ func getInventoryFromDB(c echo.Context) error {
 func getOrdersFromDB(c echo.Context) error {
 	user := c.Get("user").(*middleware.UserContext)
 
-	createdAtFrom := c.QueryParam("createdAtFrom")
-	createdAtTo := c.QueryParam("createdAtTo")
+	// 프론트에서 KST 날짜(yyyy-MM-dd)로 전달되므로 UTC로 변환하여 DB 조회
+	kst := time.FixedZone("KST", 9*60*60)
+	var fromUTC, toUTC string
+	if from := c.QueryParam("createdAtFrom"); from != "" {
+		if t, err := time.ParseInLocation("2006-01-02", from, kst); err == nil {
+			fromUTC = t.UTC().Format(time.RFC3339)
+		} else {
+			fromUTC = from
+		}
+	}
+	if to := c.QueryParam("createdAtTo"); to != "" {
+		// to날짜의 KST 23:59:59까지 포함
+		if t, err := time.ParseInLocation("2006-01-02T15:04:05", to, kst); err == nil {
+			toUTC = t.UTC().Format(time.RFC3339)
+		} else if t, err := time.ParseInLocation("2006-01-02", to, kst); err == nil {
+			toUTC = t.Add(24*time.Hour - time.Second).UTC().Format(time.RFC3339)
+		} else {
+			toUTC = to
+		}
+	}
 
 	type OrderItem struct {
 		VendorItemID  int64   `json:"vendorItemId"`
@@ -365,13 +391,13 @@ func getOrdersFromDB(c echo.Context) error {
 	query := "SELECT order_id, paid_at, synced_at FROM orders WHERE user_id = ?"
 	args := []interface{}{user.UserID}
 
-	if createdAtFrom != "" {
+	if fromUTC != "" {
 		query += " AND paid_at >= ?"
-		args = append(args, createdAtFrom)
+		args = append(args, fromUTC)
 	}
-	if createdAtTo != "" {
+	if toUTC != "" {
 		query += " AND paid_at <= ?"
-		args = append(args, createdAtTo)
+		args = append(args, toUTC)
 	}
 	query += " ORDER BY paid_at DESC"
 
@@ -1236,3 +1262,317 @@ func getSyncStatus(c echo.Context) error {
 	})
 }
 
+// ─── 배치 관리 ────────────────────────────────────────────────
+
+var batchJobDefs = []map[string]string{
+	{"job_type": "products", "job_name": "상품관리 동기화"},
+	{"job_type": "orders", "job_name": "주문관리 동기화"},
+	{"job_type": "inventory", "job_name": "재고관리 동기화"},
+}
+
+// getBatchJobs: 배치 작업 목록 + 마지막 실행 정보 반환
+func getBatchJobs(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+
+	type BatchJob struct {
+		JobType     string `json:"jobType"`
+		JobName     string `json:"jobName"`
+		LastStatus  string `json:"lastStatus"`
+		LastRanAt   string `json:"lastRanAt"`
+		LastMessage string `json:"lastMessage"`
+		RecordCount int    `json:"recordCount"`
+	}
+
+	var jobs []BatchJob
+	for _, def := range batchJobDefs {
+		job := BatchJob{JobType: def["job_type"], JobName: def["job_name"]}
+		database.DB.QueryRow(`
+			SELECT status, started_at, message, record_count
+			FROM batch_logs WHERE user_id = ? AND job_type = ?
+			ORDER BY id DESC LIMIT 1`,
+			user.UserID, def["job_type"],
+		).Scan(&job.LastStatus, &job.LastRanAt, &job.LastMessage, &job.RecordCount)
+		jobs = append(jobs, job)
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{"code": "SUCCESS", "data": jobs})
+}
+
+// runBatchJob: 특정 배치 수동 실행
+func runBatchJob(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+	jobType := c.Param("jobType")
+
+	validJobs := map[string]bool{"products": true, "inventory": true, "orders": true}
+	if !validJobs[jobType] {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "유효하지 않은 배치 타입"})
+	}
+
+	// 주문 동기화: 날짜 파라미터 수신 (없으면 전일자 기본값)
+	fromDate := c.QueryParam("fromDate")
+	toDate := c.QueryParam("toDate")
+
+	go executeBatchJob(user.UserID, user.VendorID, user.AccessKey, user.SecretKey, jobType, "manual", fromDate, toDate)
+
+	return c.JSON(http.StatusOK, map[string]interface{}{"code": "SUCCESS", "message": "배치 실행 시작"})
+}
+
+// getBatchLogs: 배치 실행 로그 조회
+func getBatchLogs(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+	jobType := c.QueryParam("jobType")
+
+	query := `SELECT id, job_type, triggered_by, status, message, record_count, started_at, COALESCE(finished_at,'')
+		FROM batch_logs WHERE user_id = ?`
+	args := []interface{}{user.UserID}
+	if jobType != "" {
+		query += " AND job_type = ?"
+		args = append(args, jobType)
+	}
+	query += " ORDER BY id DESC LIMIT 50"
+
+	rows, err := database.DB.Query(query, args...)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
+	}
+	defer rows.Close()
+
+	type BatchLog struct {
+		ID          int    `json:"id"`
+		JobType     string `json:"jobType"`
+		TriggeredBy string `json:"triggeredBy"`
+		Status      string `json:"status"`
+		Message     string `json:"message"`
+		RecordCount int    `json:"recordCount"`
+		StartedAt   string `json:"startedAt"`
+		FinishedAt  string `json:"finishedAt"`
+	}
+	var logs []BatchLog
+	for rows.Next() {
+		var l BatchLog
+		rows.Scan(&l.ID, &l.JobType, &l.TriggeredBy, &l.Status, &l.Message, &l.RecordCount, &l.StartedAt, &l.FinishedAt)
+		logs = append(logs, l)
+	}
+	if logs == nil {
+		logs = []BatchLog{}
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"code": "SUCCESS", "data": logs})
+}
+
+// executeBatchJob: 실제 배치 실행
+func executeBatchJob(userID int64, vendorID, accessKey, secretKey, jobType, triggeredBy string, dateParts ...string) {
+	res, err := database.DB.Exec(`
+		INSERT INTO batch_logs (user_id, job_type, triggered_by, status, message, started_at)
+		VALUES (?, ?, ?, 'running', '', CURRENT_TIMESTAMP)`,
+		userID, jobType, triggeredBy,
+	)
+	if err != nil {
+		return
+	}
+	logID, _ := res.LastInsertId()
+
+	finishLog := func(status, message string, count int) {
+		database.DB.Exec(`
+			UPDATE batch_logs SET status=?, message=?, record_count=?, finished_at=CURRENT_TIMESTAMP
+			WHERE id=?`, status, message, count, logID)
+	}
+
+	client := coupang.NewClient(vendorID, accessKey, secretKey)
+	now := time.Now()
+	yesterday := now.AddDate(0, 0, -1)
+	// 날짜 파라미터가 있으면 사용, 없으면 전일자 기본값
+	fromDate := yesterday.Format("2006-01-02") + "T00:00:00"
+	toDate := yesterday.Format("2006-01-02") + "T23:59:59"
+	if len(dateParts) >= 1 && dateParts[0] != "" {
+		fromDate = dateParts[0] + "T00:00:00"
+	}
+	if len(dateParts) >= 2 && dateParts[1] != "" {
+		toDate = dateParts[1] + "T23:59:59"
+	}
+
+	switch jobType {
+	case "products":
+		count, err := batchSyncProducts(userID, client)
+		if err != nil {
+			finishLog("failed", err.Error(), 0)
+		} else {
+			upsertSyncStatus(userID, "products", count)
+			finishLog("success", fmt.Sprintf("상품 %d건 동기화 완료", count), count)
+		}
+	case "inventory":
+		count, err := batchSyncInventory(userID, client)
+		if err != nil {
+			finishLog("failed", err.Error(), 0)
+		} else {
+			upsertSyncStatus(userID, "inventory", count)
+			finishLog("success", fmt.Sprintf("재고 %d건 동기화 완료", count), count)
+		}
+	case "orders":
+		count, err := batchSyncOrders(userID, vendorID, client, fromDate, toDate)
+		if err != nil {
+			finishLog("failed", err.Error(), 0)
+		} else {
+			upsertSyncStatus(userID, "orders", count)
+			finishLog("success", fmt.Sprintf("주문 %d건 동기화 완료 (%s ~ %s)", count, fromDate[:10], toDate[:10]), count)
+		}
+	}
+}
+
+// batchSyncProducts: 상품 동기화
+func batchSyncProducts(userID int64, client *coupang.Client) (int, error) {
+	path := "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products"
+	query := fmt.Sprintf("vendorId=%s&nextToken=&maxPerPage=100&status=APPROVED", client.VendorID)
+	body, err := client.Request("GET", path, query)
+	if err != nil {
+		return 0, err
+	}
+	var resp struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return 0, fmt.Errorf("응답 파싱 실패")
+	}
+	type ProductItem struct {
+		SellerProductId     int64  `json:"sellerProductId"`
+		SellerProductName   string `json:"sellerProductName"`
+		Brand               string `json:"brand"`
+		StatusName          string `json:"statusName"`
+		SaleStartedAt       string `json:"saleStartedAt"`
+		SaleEndedAt         string `json:"saleEndedAt"`
+		DisplayCategoryCode int64  `json:"displayCategoryCode"`
+		CategoryId          int64  `json:"categoryId"`
+		RegistrationType    string `json:"registrationType"`
+	}
+	count := 0
+	for _, raw := range resp.Data {
+		var p ProductItem
+		if err := json.Unmarshal(raw, &p); err != nil {
+			continue
+		}
+		database.DB.Exec(`
+			INSERT INTO products (user_id, seller_product_id, seller_product_name, brand, status_name,
+				sale_started_at, sale_ended_at, display_category_code, category_id, registration_type, synced_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(user_id, seller_product_id) DO UPDATE SET
+				seller_product_name=excluded.seller_product_name, brand=excluded.brand,
+				status_name=excluded.status_name, synced_at=CURRENT_TIMESTAMP`,
+			userID, p.SellerProductId, p.SellerProductName, p.Brand, p.StatusName,
+			p.SaleStartedAt, p.SaleEndedAt, p.DisplayCategoryCode, p.CategoryId, p.RegistrationType)
+		count++
+	}
+	return count, nil
+}
+
+// batchSyncInventory: 재고 동기화
+func batchSyncInventory(userID int64, client *coupang.Client) (int, error) {
+	path := fmt.Sprintf("/v2/providers/rg_open_api/apis/api/v1/vendors/%s/rg/inventory/summaries", client.VendorID)
+	body, err := client.Request("GET", path, "maxPerPage=100")
+	if err != nil {
+		return 0, err
+	}
+	var resp struct {
+		Data struct {
+			Content []json.RawMessage `json:"content"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return 0, fmt.Errorf("응답 파싱 실패")
+	}
+	type InvItem struct {
+		VendorItemId    int64  `json:"vendorItemId"`
+		SellerProductId int64  `json:"sellerProductId"`
+		ProductName     string `json:"productName"`
+		ItemName        string `json:"itemName"`
+		StatusName      string `json:"statusName"`
+		StockQuantity   int    `json:"stockQuantity"`
+	}
+	count := 0
+	for _, raw := range resp.Data.Content {
+		var item InvItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			continue
+		}
+		database.DB.Exec(`
+			INSERT INTO inventory (user_id, vendor_item_id, seller_product_id, product_name, item_name, status_name, stock_quantity, synced_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(user_id, vendor_item_id) DO UPDATE SET
+				stock_quantity=excluded.stock_quantity, status_name=excluded.status_name, synced_at=CURRENT_TIMESTAMP`,
+			userID, item.VendorItemId, item.SellerProductId, item.ProductName, item.ItemName, item.StatusName, item.StockQuantity)
+		count++
+	}
+	return count, nil
+}
+
+// batchSyncOrders: 주문 동기화 (전일자)
+func batchSyncOrders(userID int64, vendorID string, client *coupang.Client, fromDate, toDate string) (int, error) {
+	path := fmt.Sprintf("/v2/providers/rg_open_api/apis/api/v1/vendors/%s/rg/orders", vendorID)
+	query := fmt.Sprintf("createdAtFrom=%s&createdAtTo=%s&maxPerPage=100", fromDate, toDate)
+	body, err := client.Request("GET", path, query)
+	if err != nil {
+		return 0, err
+	}
+	var resp struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return 0, fmt.Errorf("응답 파싱 실패")
+	}
+	type OrderItem struct {
+		OrderId int64  `json:"orderId"`
+		PaidAt  string `json:"paidAt"`
+	}
+	count := 0
+	for _, raw := range resp.Data {
+		var o OrderItem
+		if err := json.Unmarshal(raw, &o); err != nil {
+			continue
+		}
+		database.DB.Exec(`
+			INSERT INTO orders (user_id, order_id, paid_at, synced_at)
+			VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(user_id, order_id) DO UPDATE SET paid_at=excluded.paid_at, synced_at=CURRENT_TIMESTAMP`,
+			userID, o.OrderId, o.PaidAt)
+		count++
+	}
+	return count, nil
+}
+
+// startScheduler: 매일 KST 00:00에 모든 배치 실행
+func startScheduler(e *echo.Echo) {
+	loc, _ := time.LoadLocation("Asia/Seoul")
+	for {
+		now := time.Now().In(loc)
+		next := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, loc)
+		time.Sleep(time.Until(next))
+
+		e.Logger.Infof("스케줄러: 배치 실행 시작 %s", time.Now().In(loc).Format("2006-01-02 15:04:05"))
+
+		rows, err := database.DB.Query(`SELECT id, vendor_id, access_key, secret_key FROM users`)
+		if err != nil {
+			e.Logger.Errorf("스케줄러: 사용자 조회 실패 %v", err)
+			continue
+		}
+		type userInfo struct {
+			id        int64
+			vendorID  string
+			accessKey string
+			secretKey string
+		}
+		var users []userInfo
+		for rows.Next() {
+			var u userInfo
+			rows.Scan(&u.id, &u.vendorID, &u.accessKey, &u.secretKey)
+			if u.vendorID != "" && u.accessKey != "" {
+				users = append(users, u)
+			}
+		}
+		rows.Close()
+
+		for _, u := range users {
+			for _, job := range batchJobDefs {
+				go executeBatchJob(u.id, u.vendorID, u.accessKey, u.secretKey, job["job_type"], "scheduler")
+				time.Sleep(2 * time.Second)
+			}
+		}
+	}
+}

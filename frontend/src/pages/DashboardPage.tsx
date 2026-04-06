@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AuthContext } from '../contexts/AuthContext';
 import { useNavigate } from '@tanstack/react-router';
 import { apiClient } from '../lib/api';
+import { formatKST } from '../lib/formatters';
 
 interface SyncInfo {
   dataType: string;
@@ -32,16 +33,6 @@ const DashboardPage = () => {
     navigate({ to: '/login' });
   };
 
-  const formatSyncTime = (t: string) => {
-    if (!t) return '동기화 없음';
-    try {
-      const d = new Date(t);
-      const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
-      return kst.toISOString().slice(0, 16).replace('T', ' ');
-    } catch {
-      return t.slice(0, 16).replace('T', ' ');
-    }
-  };
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -79,7 +70,7 @@ const DashboardPage = () => {
               {syncStatus?.products?.recordCount ?? '-'}
             </p>
             <p className="text-xs text-gray-400 mt-2">
-              최종 동기화: {formatSyncTime(syncStatus?.products?.lastSyncedAt ?? '')}
+              최종 동기화: {formatKST(syncStatus?.products?.lastSyncedAt ?? '', '동기화 없음')}
             </p>
           </div>
           <div className="bg-white p-6 rounded-lg shadow">
@@ -88,7 +79,7 @@ const DashboardPage = () => {
               {syncStatus?.orders?.recordCount ?? '-'}
             </p>
             <p className="text-xs text-gray-400 mt-2">
-              최종 동기화: {formatSyncTime(syncStatus?.orders?.lastSyncedAt ?? '')}
+              최종 동기화: {formatKST(syncStatus?.orders?.lastSyncedAt ?? '', '동기화 없음')}
             </p>
           </div>
           <div className="bg-white p-6 rounded-lg shadow">
@@ -97,7 +88,7 @@ const DashboardPage = () => {
               {syncStatus?.inventory?.recordCount ?? '-'}
             </p>
             <p className="text-xs text-gray-400 mt-2">
-              최종 동기화: {formatSyncTime(syncStatus?.inventory?.lastSyncedAt ?? '')}
+              최종 동기화: {formatKST(syncStatus?.inventory?.lastSyncedAt ?? '', '동기화 없음')}
             </p>
           </div>
         </div>
@@ -130,6 +121,14 @@ const DashboardPage = () => {
               </button>
             </li>
 
+            <li>
+              <button
+                onClick={() => navigate({ to: '/batch' })}
+                className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-md cursor-pointer"
+              >
+                ⚙️ 배치 관리
+              </button>
+            </li>
             <li>
               <button
                 onClick={() => navigate({ to: '/profile' })}

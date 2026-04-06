@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { apiClient } from '../lib/api';
+import { formatKST } from '../lib/formatters';
 import type { InventoryItem, InventoryResponse } from '../types/inventory';
 
 const PAGE_SIZE = 20;
@@ -402,17 +403,6 @@ function Header({
   isSyncing: boolean;
   lastSyncedAt: string;
 }) {
-  const formatSyncTime = (t: string) => {
-    if (!t) return null;
-    try {
-      const d = new Date(t);
-      const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
-      return kst.toISOString().slice(0, 16).replace('T', ' ');
-    } catch {
-      return t.slice(0, 16).replace('T', ' ');
-    }
-  };
-
   return (
     <header className="bg-white shadow">
       <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
@@ -422,7 +412,7 @@ function Header({
           </button>
           <h1 className="text-2xl font-bold text-gray-800">재고 관리</h1>
           {lastSyncedAt && (
-            <span className="text-xs text-gray-400">마지막 동기화: {formatSyncTime(lastSyncedAt)}</span>
+            <span className="text-xs text-gray-400">마지막 동기화: {formatKST(lastSyncedAt)}</span>
           )}
         </div>
         <button

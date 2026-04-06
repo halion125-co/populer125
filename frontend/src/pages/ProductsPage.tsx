@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { apiClient } from '../lib/api';
+import { formatKST } from '../lib/formatters';
 import type { Product, ProductsResponse, ProductItem, ProductItemsResponse } from '../types/product';
 
 interface Filters {
@@ -373,10 +374,6 @@ function Header({
   isSyncing: boolean;
   lastSyncedAt: string;
 }) {
-  const formatSyncTime = (t: string) => {
-    if (!t) return null;
-    return t.replace('T', ' ').slice(0, 19);
-  };
 
   return (
     <header className="bg-white shadow">
@@ -387,7 +384,7 @@ function Header({
           </button>
           <h1 className="text-2xl font-bold text-gray-800">상품 관리</h1>
           {lastSyncedAt && (
-            <span className="text-xs text-gray-400">마지막 동기화: {formatSyncTime(lastSyncedAt)}</span>
+            <span className="text-xs text-gray-400">마지막 동기화: {formatKST(lastSyncedAt)}</span>
           )}
         </div>
         <button

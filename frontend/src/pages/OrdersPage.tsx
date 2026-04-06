@@ -1,7 +1,9 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, type BarShapeProps } from 'recharts';
 import { apiClient } from '../lib/api';
+import { formatKST } from '../lib/formatters';
 import type { Order, OrdersResponse } from '../types/order';
 
 interface Filters {
@@ -14,13 +16,18 @@ const initialFilters: Filters = {
   productName: '',
 };
 
+const toKSTDateString = (date: Date) => {
+  const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  return kst.toISOString().slice(0, 10);
+};
+
 const getDefaultRange = () => {
-  const to = new Date();
-  const from = new Date();
-  from.setDate(from.getDate() - 30);
+  const now = new Date();
+  const to = toKSTDateString(now);
+  const from30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   return {
-    from: from.toISOString().slice(0, 10),
-    to: to.toISOString().slice(0, 10),
+    from: toKSTDateString(from30),
+    to,
   };
 };
 
@@ -141,6 +148,152 @@ const OrdersPage = () => {
   }, [orders, filters]);
 
   const hasActiveFilters = Object.values(filters).some(v => v !== '');
+
+  // 그래프 뷰 모드 (일/시간)
+  const [chartView, setChartView] = useState<'day' | 'hour'>('day');
+
+  // 조회 기간 일수 계산
+  const rangeDays = useMemo(() => {
+    if (!searchRange.from || !searchRange.to) return 0;
+    const diff = new Date(searchRange.to).getTime() - new Date(searchRange.from).getTime();
+    return Math.round(diff / (24 * 60 * 60 * 1000)) + 1;
+  }, [searchRange]);
+
+  // 실제 사용되는 뷰 모드 (3일 초과 시 강제 일 단위)
+  const effectiveChartView = rangeDays > 3 ? 'day' : chartView;
+
+  // UTC paidAt → KST Date
+  const toKSTDate = (utcStr: string) => new Date(new Date(utcStr).getTime() + 9 * 60 * 60 * 1000);
+
+  // 그래프 데이터 집계
+  const chartData = useMemo(() => {
+    if (effectiveChartView === 'hour') {
+      const isSingleDay = rangeDays === 1;
+
+      if (isSingleDay) {
+        // 하루 조회: 30분 단위 (00:00 ~ 23:30, 총 48 슬롯)
+        // key: "0" ~ "47" (slot index)
+        const slots: number[] = Array(48).fill(0);
+        let lastSlot = -1;
+        filteredOrders.forEach((order) => {
+          if (!order.paidAt) return;
+          const kst = toKSTDate(order.paidAt);
+          const slot = kst.getUTCHours() * 2 + (kst.getUTCMinutes() >= 30 ? 1 : 0);
+          const sales = (order.orderItems || []).reduce(
+            (s, item) => s + (item.salesPrice || 0) * (item.salesQuantity || 0), 0
+          );
+          slots[slot] += sales;
+          if (slot > lastSlot) lastSlot = slot;
+        });
+
+        const maxSlot = lastSlot >= 0 ? lastSlot : 47;
+        return Array.from({ length: maxSlot + 1 }, (_, i) => {
+          const h = Math.floor(i / 2);
+          // 정각 슬롯(i가 짝수)만 시간 표시, 30분 슬롯은 빈 문자열
+          return {
+            label: i % 2 === 0 ? `${String(h).padStart(2, '0')}시` : '',
+            sub: '',
+            sales: slots[i],
+          };
+        });
+      }
+
+      // 2~3일 조회: 날짜별 24시간 슬롯
+      // key: "2026-04-05-14" 형식
+      const slots: Record<string, number> = {};
+      const datelist: string[] = [];
+      if (searchRange.from && searchRange.to) {
+        const cur = new Date(searchRange.from);
+        const end = new Date(searchRange.to);
+        while (cur <= end) {
+          const dateKey = cur.toISOString().slice(0, 10);
+          datelist.push(dateKey);
+          for (let h = 0; h < 24; h++) {
+            slots[`${dateKey}-${h}`] = 0;
+          }
+          cur.setDate(cur.getDate() + 1);
+        }
+      }
+
+      // 각 주문을 해당 날짜-시간 슬롯에 집계
+      let lastDataKey = '';
+      filteredOrders.forEach((order) => {
+        if (!order.paidAt) return;
+        const kst = toKSTDate(order.paidAt);
+        const dateKey = kst.toISOString().slice(0, 10);
+        const hour = kst.getUTCHours();
+        const key = `${dateKey}-${hour}`;
+        if (key in slots) {
+          const sales = (order.orderItems || []).reduce(
+            (s, item) => s + (item.salesPrice || 0) * (item.salesQuantity || 0), 0
+          );
+          slots[key] += sales;
+          if (!lastDataKey || key > lastDataKey) lastDataKey = key;
+        }
+      });
+
+      // 마지막 날은 데이터가 있는 마지막 시간까지만 표시
+      const lastDate = datelist[datelist.length - 1];
+      const lastHour = lastDataKey.startsWith(lastDate)
+        ? parseInt(lastDataKey.split('-')[3] ?? '23', 10)
+        : 23;
+
+      const result: { label: string; sub: string; sales: number }[] = [];
+      datelist.forEach((dateKey, di) => {
+        const d = new Date(dateKey);
+        const dateLabel = `${d.getUTCMonth() + 1}/${String(d.getUTCDate()).padStart(2, '0')}`;
+        const maxHour = di === datelist.length - 1 ? lastHour : 23;
+        for (let h = 0; h <= maxHour; h++) {
+          result.push({
+            label: `${String(h).padStart(2, '0')}시`,
+            sub: h === 0 ? dateLabel : '',
+            sales: slots[`${dateKey}-${h}`] ?? 0,
+          });
+        }
+      });
+      return result;
+    } else {
+      // 일 단위: from~to 날짜 슬롯 생성
+      const slots: Record<string, number> = {};
+      if (searchRange.from && searchRange.to) {
+        const cur = new Date(searchRange.from);
+        const end = new Date(searchRange.to);
+        while (cur <= end) {
+          slots[cur.toISOString().slice(0, 10)] = 0;
+          cur.setDate(cur.getDate() + 1);
+        }
+      }
+      filteredOrders.forEach((order) => {
+        if (!order.paidAt) return;
+        const kst = toKSTDate(order.paidAt);
+        const key = kst.toISOString().slice(0, 10);
+        if (key in slots) {
+          const sales = (order.orderItems || []).reduce(
+            (s, item) => s + (item.salesPrice || 0) * (item.salesQuantity || 0), 0
+          );
+          slots[key] += sales;
+        }
+      });
+      return Object.entries(slots).map(([date, sales]) => {
+        const d = new Date(date);
+        const days = ['일', '월', '화', '수', '목', '금', '토'];
+        const line1 = `${d.getUTCMonth() + 1}/${String(d.getUTCDate()).padStart(2, '0')}`;
+        const line2 = `(${days[d.getUTCDay()]})`;
+        return { label: line1, sub: line2, sales };
+      });
+    }
+  }, [filteredOrders, effectiveChartView, searchRange]);
+
+  // Y축 단위 결정: 최대값 3만원 이하 → 5천원 단위, 초과 → 만원 단위
+  const chartYConfig = useMemo(() => {
+    const maxSales = Math.max(...chartData.map((d) => d.sales), 0);
+    const unit = maxSales <= 30000 ? 5000 : 10000;
+    const unitLabel = unit === 5000 ? '5천원' : '만원';
+    const divisor = unit === 5000 ? 5000 : 10000;
+    const tickCount = Math.ceil(maxSales / unit) + 1;
+    const ticks = Array.from({ length: tickCount }, (_, i) => i * unit);
+    return { unit, unitLabel, divisor, ticks, maxSales };
+  }, [chartData]);
 
   const totalSales = useMemo(() => {
     return filteredOrders.reduce((sum, order) => {
@@ -269,7 +422,7 @@ const OrdersPage = () => {
             <div className="flex gap-2 flex-wrap">
               <button
                 onClick={() => {
-                  const today = new Date().toISOString().slice(0, 10);
+                  const today = toKSTDateString(new Date());
                   handleQuickRange(today, today);
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
@@ -278,9 +431,7 @@ const OrdersPage = () => {
               </button>
               <button
                 onClick={() => {
-                  const yesterday = new Date();
-                  yesterday.setDate(yesterday.getDate() - 1);
-                  const d = yesterday.toISOString().slice(0, 10);
+                  const d = toKSTDateString(new Date(Date.now() - 24 * 60 * 60 * 1000));
                   handleQuickRange(d, d);
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
@@ -289,10 +440,8 @@ const OrdersPage = () => {
               </button>
               <button
                 onClick={() => {
-                  const to = new Date();
-                  const from = new Date();
-                  from.setDate(from.getDate() - 7);
-                  handleQuickRange(from.toISOString().slice(0, 10), to.toISOString().slice(0, 10));
+                  const now = new Date();
+                  handleQuickRange(toKSTDateString(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)), toKSTDateString(now));
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
               >
@@ -300,10 +449,8 @@ const OrdersPage = () => {
               </button>
               <button
                 onClick={() => {
-                  const to = new Date();
-                  const from = new Date();
-                  from.setDate(from.getDate() - 30);
-                  handleQuickRange(from.toISOString().slice(0, 10), to.toISOString().slice(0, 10));
+                  const now = new Date();
+                  handleQuickRange(toKSTDateString(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)), toKSTDateString(now));
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
               >
@@ -341,6 +488,80 @@ const OrdersPage = () => {
             <p className="text-sm text-gray-500">총 판매금액</p>
             <p className="text-2xl font-bold text-orange-600">{totalSales.toLocaleString('ko-KR')}원</p>
           </div>
+        </div>
+
+        {/* Sales Chart */}
+        <div className="mb-6 bg-white rounded-lg shadow p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-gray-700">매출 현황 ({chartYConfig.unitLabel} 단위)</h2>
+            <div className="flex rounded-md border border-gray-300 overflow-hidden text-xs">
+              <button
+                onClick={() => setChartView('day')}
+                disabled={rangeDays > 3}
+                className={`px-3 py-1.5 ${effectiveChartView === 'day' ? 'bg-blue-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'} ${rangeDays > 3 ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >일</button>
+              <button
+                onClick={() => setChartView('hour')}
+                disabled={rangeDays > 3}
+                className={`px-3 py-1.5 border-l border-gray-300 ${effectiveChartView === 'hour' ? 'bg-blue-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'} ${rangeDays > 3 ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >시간</button>
+            </div>
+          </div>
+          {rangeDays > 3 && chartView === 'hour' && (
+            <p className="text-xs text-orange-500 mb-2">조회 기간이 3일을 초과하여 일 단위로 표시됩니다.</p>
+          )}
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={chartData} margin={{ top: 24, right: 8, left: 0, bottom: 30 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="label"
+                interval={0}
+                tick={(props) => {
+                  const { x, y, payload, index } = props;
+                  const sub = chartData[index]?.sub ?? '';
+                  return (
+                    <g transform={`translate(${x},${y})`}>
+                      <text x={0} y={0} dy={12} textAnchor="middle" fontSize={11} fill="#6b7280">{payload.value}</text>
+                      {sub && <text x={0} y={0} dy={24} textAnchor="middle" fontSize={10} fill="#9ca3af">{sub}</text>}
+                    </g>
+                  );
+                }}
+              />
+              <YAxis
+                ticks={chartYConfig.ticks}
+                tickFormatter={(v) => String(Math.round(v / chartYConfig.divisor))}
+                tick={{ fontSize: 11 }}
+                width={36}
+              />
+              <Tooltip
+                formatter={(value: number | undefined) => [`${(value ?? 0).toLocaleString('ko-KR')}원`, '매출']}
+              />
+              <Bar
+                dataKey="sales"
+                radius={[3, 3, 0, 0]}
+                maxBarSize={48}
+                shape={(props: BarShapeProps) => {
+                  const { x, y, width, height, value } = props as BarShapeProps & { x: number; y: number; width: number; height: number; value: number };
+                  const fill = value === chartYConfig.maxSales && value > 0 ? '#ef4444' : '#3b82f6';
+                  const r = 3;
+                  return (
+                    <path
+                      d={`M${x},${y + height} L${x},${y + r} Q${x},${y} ${x + r},${y} L${x + width - r},${y} Q${x + width},${y} ${x + width},${y + r} L${x + width},${y + height} Z`}
+                      fill={fill}
+                    />
+                  );
+                }}
+              >
+                <LabelList
+                  dataKey="sales"
+                  position="top"
+                  fontSize={10}
+                  fill="#374151"
+                  formatter={(v: unknown) => typeof v === 'number' && v > 0 ? `${(v / 10000).toFixed(1)}만` : ''}
+                />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </div>
 
         {/* Search Filters */}
@@ -456,17 +677,6 @@ function Header({
   lastSyncedAt: string;
   syncDateRange: { from: string; to: string };
 }) {
-  const formatSyncTime = (t: string) => {
-    if (!t) return null;
-    try {
-      const d = new Date(t);
-      const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
-      return kst.toISOString().slice(0, 16).replace('T', ' ');
-    } catch {
-      return t.slice(0, 16).replace('T', ' ');
-    }
-  };
-
   return (
     <header className="bg-white shadow">
       <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
@@ -476,7 +686,7 @@ function Header({
           </button>
           <h1 className="text-2xl font-bold text-gray-800">주문 관리</h1>
           {lastSyncedAt && (
-            <span className="text-xs text-gray-400">마지막 동기화: {formatSyncTime(lastSyncedAt)}</span>
+            <span className="text-xs text-gray-400">마지막 동기화: {formatKST(lastSyncedAt)}</span>
           )}
         </div>
         <div className="flex items-center gap-3">
@@ -512,7 +722,7 @@ function OrderRow({ order }: { order: Order }) {
   return (
     <tr className="hover:bg-gray-50">
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">{order.orderId}</td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{order.paidAt || '-'}</td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatKST(order.paidAt)}</td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">{firstItem?.vendorItemId || '-'}</td>
       <td className="px-6 py-4">
         <div className="text-sm text-gray-900">{firstItem?.productName || '-'}</div>

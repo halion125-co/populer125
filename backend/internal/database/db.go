@@ -223,6 +223,41 @@ func createTables() error {
 			synced_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
+	if err != nil {
+		return err
+	}
+
+	// 배치 작업 정의 테이블
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS batch_jobs (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id     INTEGER NOT NULL,
+			job_type    TEXT NOT NULL,
+			job_name    TEXT NOT NULL,
+			is_active   INTEGER DEFAULT 1,
+			cron_expr   TEXT DEFAULT '0 0 * * *',
+			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(user_id, job_type)
+		);
+	`)
+	if err != nil {
+		return err
+	}
+
+	// 배치 실행 로그 테이블
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS batch_logs (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id      INTEGER NOT NULL,
+			job_type     TEXT NOT NULL,
+			triggered_by TEXT DEFAULT 'scheduler',
+			status       TEXT DEFAULT 'running',
+			message      TEXT DEFAULT '',
+			record_count INTEGER DEFAULT 0,
+			started_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+			finished_at  DATETIME
+		);
+	`)
 	return err
 }
 

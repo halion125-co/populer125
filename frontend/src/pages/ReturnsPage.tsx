@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { apiClient } from '../lib/api';
+import { formatKST } from '../lib/formatters';
 import type { ReturnItem, ReturnsResponse } from '../types/returns';
 import { RETURN_STATUSES } from '../types/returns';
 
@@ -65,21 +66,6 @@ const ReturnsPage = () => {
     setSearchParams({ from: newFrom, to: newTo, status });
   };
 
-  const formatDateTime = (val: string | undefined) => {
-    if (!val || val === '') return '-';
-    return val.replace('T', ' ').slice(0, 19);
-  };
-
-  const formatSyncTime = (t: string) => {
-    if (!t) return null;
-    try {
-      const d = new Date(t);
-      const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
-      return kst.toISOString().slice(0, 16).replace('T', ' ');
-    } catch {
-      return t.slice(0, 16).replace('T', ' ');
-    }
-  };
 
   // 상태 배지
   const StatusBadge = ({ s }: { s: string }) => {
@@ -119,7 +105,7 @@ const ReturnsPage = () => {
             </button>
             <h1 className="text-2xl font-bold text-gray-800">반품 관리</h1>
             {lastSyncedAt && (
-              <span className="text-xs text-gray-400">마지막 동기화: {formatSyncTime(lastSyncedAt)}</span>
+              <span className="text-xs text-gray-400">마지막 동기화: {formatKST(lastSyncedAt)}</span>
             )}
           </div>
           <button
@@ -286,8 +272,8 @@ const ReturnsPage = () => {
                       <td className="px-4 py-3 text-sm text-gray-700">
                         <div className="max-w-xs truncate">{item.returnReason || '-'}</div>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{formatDateTime(item.createdAt)}</td>
-                      <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{formatDateTime(item.returnedAt)}</td>
+                      <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{formatKST(item.createdAt ?? '')}</td>
+                      <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{formatKST(item.returnedAt ?? '')}</td>
                     </tr>
                   ))}
                 </tbody>

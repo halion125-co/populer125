@@ -16,6 +16,7 @@ import { Route as ProductsRouteImport } from './routes/products'
 import { Route as OrdersRouteImport } from './routes/orders'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as InventoryRouteImport } from './routes/inventory'
+import { Route as BatchRouteImport } from './routes/batch'
 import { Route as IndexRouteImport } from './routes/index'
 
 const ReturnsRoute = ReturnsRouteImport.update({
@@ -53,6 +54,11 @@ const InventoryRoute = InventoryRouteImport.update({
   path: '/inventory',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BatchRoute = BatchRouteImport.update({
+  id: '/batch',
+  path: '/batch',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -61,6 +67,7 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/batch': typeof BatchRoute
   '/inventory': typeof InventoryRoute
   '/login': typeof LoginRoute
   '/orders': typeof OrdersRoute
@@ -71,6 +78,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/batch': typeof BatchRoute
   '/inventory': typeof InventoryRoute
   '/login': typeof LoginRoute
   '/orders': typeof OrdersRoute
@@ -82,6 +90,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/batch': typeof BatchRoute
   '/inventory': typeof InventoryRoute
   '/login': typeof LoginRoute
   '/orders': typeof OrdersRoute
@@ -94,6 +103,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/batch'
     | '/inventory'
     | '/login'
     | '/orders'
@@ -104,6 +114,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/batch'
     | '/inventory'
     | '/login'
     | '/orders'
@@ -114,6 +125,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/batch'
     | '/inventory'
     | '/login'
     | '/orders'
@@ -125,6 +137,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  BatchRoute: typeof BatchRoute
   InventoryRoute: typeof InventoryRoute
   LoginRoute: typeof LoginRoute
   OrdersRoute: typeof OrdersRoute
@@ -185,6 +198,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InventoryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/batch': {
+      id: '/batch'
+      path: '/batch'
+      fullPath: '/batch'
+      preLoaderRoute: typeof BatchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -197,6 +217,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  BatchRoute: BatchRoute,
   InventoryRoute: InventoryRoute,
   LoginRoute: LoginRoute,
   OrdersRoute: OrdersRoute,

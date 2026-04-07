@@ -11,6 +11,7 @@ type Config struct {
 	JWTSecret        string
 	DatabasePath     string
 	ServerPort       string
+	SlackWebhookURL  string
 }
 
 func Load() *Config {
@@ -21,6 +22,7 @@ func Load() *Config {
 		JWTSecret:        getEnv("JWT_SECRET", "dev-secret-key"),
 		DatabasePath:     getEnv("DATABASE_PATH", "./data/rocketgrowth.db"),
 		ServerPort:       getEnv("BACKEND_PORT", "8000"),
+		SlackWebhookURL:  getEnv("SLACK_WEBHOOK_URL", ""),
 	}
 }
 

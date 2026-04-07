@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -72,6 +74,7 @@ func main() {
 
 	// 스케줄러 시작 (매일 KST 00:00)
 	go startScheduler(e)
+	go startOrderPolling(e)
 
 	port := fmt.Sprintf(":%s", cfg.ServerPort)
 	e.Logger.Fatal(e.Start(port))
@@ -1535,6 +1538,188 @@ func batchSyncOrders(userID int64, vendorID string, client *coupang.Client, from
 		count++
 	}
 	return count, nil
+}
+
+// sendSlackNotification: 슬랙 웹훅으로 메시지 전송
+func sendSlackNotification(webhookURL, message string) error {
+	payload, _ := json.Marshal(map[string]string{"text": message})
+	req, err := http.NewRequest("POST", webhookURL, bytes.NewBuffer(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("slack webhook failed: %s", string(body))
+	}
+	return nil
+}
+
+// startOrderPolling: 30분마다 오늘 주문을 폴링하여 신규 주문 발생 시 슬랙 알림
+func startOrderPolling(e *echo.Echo) {
+	loc, _ := time.LoadLocation("Asia/Seoul")
+
+	type userInfo struct {
+		id        int64
+		vendorID  string
+		accessKey string
+		secretKey string
+	}
+	type orderItem struct {
+		VendorItemId   int64  `json:"vendorItemId"`
+		ProductName    string `json:"productName"`
+		SalesQuantity  int    `json:"salesQuantity"`
+		UnitSalesPrice string `json:"unitSalesPrice"`
+	}
+	type order struct {
+		OrderId    int64       `json:"orderId"`
+		PaidAt     int64       `json:"paidAt"`
+		OrderItems []orderItem `json:"orderItems"`
+	}
+
+	for {
+		time.Sleep(30 * time.Minute)
+
+		if cfg.SlackWebhookURL == "" {
+			continue
+		}
+
+		now := time.Now().In(loc)
+		todayStr := now.Format("20060102")
+
+		rows, err := database.DB.Query(`SELECT id, vendor_id, access_key, secret_key FROM users`)
+		if err != nil {
+			e.Logger.Errorf("[order polling] 사용자 조회 실패: %v", err)
+			continue
+		}
+		var users []userInfo
+		for rows.Next() {
+			var u userInfo
+			rows.Scan(&u.id, &u.vendorID, &u.accessKey, &u.secretKey)
+			if u.vendorID != "" && u.accessKey != "" {
+				users = append(users, u)
+			}
+		}
+		rows.Close()
+
+		for _, u := range users {
+			// 1. DB에서 오늘 날짜 기준 기존 order_id 목록 조회
+			kstMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC()
+			kstTomorrow := kstMidnight.Add(24 * time.Hour)
+			existRows, err := database.DB.Query(
+				`SELECT order_id FROM orders WHERE user_id = ? AND paid_at >= ? AND paid_at < ?`,
+				u.id, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"),
+			)
+			if err != nil {
+				e.Logger.Errorf("[order polling] 기존 주문 조회 실패 user=%d: %v", u.id, err)
+				continue
+			}
+			existingIDs := map[int64]bool{}
+			for existRows.Next() {
+				var oid int64
+				existRows.Scan(&oid)
+				existingIDs[oid] = true
+			}
+			existRows.Close()
+
+			// 2. 쿠팡 API 호출 (오늘 날짜)
+			client := coupang.NewClient(u.vendorID, u.accessKey, u.secretKey)
+			path := fmt.Sprintf("/v2/providers/rg_open_api/apis/api/v1/vendors/%s/rg/orders", u.vendorID)
+			query := fmt.Sprintf("createdAtFrom=%s&createdAtTo=%s&maxPerPage=100", todayStr, todayStr)
+			body, err := client.Request("GET", path, query)
+			if err != nil {
+				e.Logger.Errorf("[order polling] API 호출 실패 user=%d: %v", u.id, err)
+				continue
+			}
+
+			var resp struct {
+				Data []json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(body, &resp); err != nil {
+				e.Logger.Errorf("[order polling] 응답 파싱 실패 user=%d: %v", u.id, err)
+				continue
+			}
+
+			// 3. 신규 주문 감지 및 DB 저장
+			var newOrders []order
+			for _, raw := range resp.Data {
+				var o order
+				if err := json.Unmarshal(raw, &o); err != nil {
+					continue
+				}
+				paidAtStr := time.Unix(o.PaidAt/1000, 0).UTC().Format("2006-01-02T15:04:05Z")
+				// DB upsert (항상 최신 상태 유지)
+				database.DB.Exec(`
+					INSERT INTO orders (user_id, order_id, paid_at, synced_at)
+					VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+					ON CONFLICT(user_id, order_id) DO UPDATE SET paid_at=excluded.paid_at, synced_at=CURRENT_TIMESTAMP`,
+					u.id, o.OrderId, paidAtStr)
+				database.DB.Exec("DELETE FROM order_items WHERE user_id = ? AND order_id = ?", u.id, o.OrderId)
+				for _, oi := range o.OrderItems {
+					var unitPrice float64
+					fmt.Sscanf(oi.UnitSalesPrice, "%f", &unitPrice)
+					database.DB.Exec(`
+						INSERT INTO order_items (user_id, order_id, vendor_item_id, product_name, sales_quantity, unit_price, sales_price)
+						VALUES (?, ?, ?, ?, ?, ?, ?)`,
+						u.id, o.OrderId, oi.VendorItemId, oi.ProductName, oi.SalesQuantity, unitPrice, unitPrice)
+				}
+				// 신규 주문만 알림 대상에 추가
+				if !existingIDs[o.OrderId] {
+					newOrders = append(newOrders, o)
+				}
+			}
+
+			if len(newOrders) == 0 {
+				e.Logger.Infof("[order polling] 신규 주문 없음 user=%d", u.id)
+				continue
+			}
+
+			// 4. 슬랙 메시지 작성
+			var totalAmt float64
+			lines := []string{}
+			for _, o := range newOrders {
+				for _, oi := range o.OrderItems {
+					var price float64
+					fmt.Sscanf(oi.UnitSalesPrice, "%f", &price)
+					amt := price * float64(oi.SalesQuantity)
+					totalAmt += amt
+					lines = append(lines, fmt.Sprintf("• %s x%d → %s원",
+						oi.ProductName, oi.SalesQuantity,
+						formatComma(int64(amt))))
+				}
+			}
+			msg := fmt.Sprintf("[로켓그로스] 신규 주문 %d건 접수\n─────────────────\n%s\n─────────────────\n합계: %d건 / %s원",
+				len(newOrders),
+				strings.Join(lines, "\n"),
+				len(newOrders),
+				formatComma(int64(totalAmt)),
+			)
+
+			if err := sendSlackNotification(cfg.SlackWebhookURL, msg); err != nil {
+				e.Logger.Errorf("[order polling] 슬랙 알림 실패 user=%d: %v", u.id, err)
+			} else {
+				e.Logger.Infof("[order polling] 슬랙 알림 전송 완료 user=%d 신규주문=%d건", u.id, len(newOrders))
+			}
+		}
+	}
+}
+
+// formatComma: 숫자를 천단위 콤마 형식으로 변환
+func formatComma(n int64) string {
+	s := fmt.Sprintf("%d", n)
+	result := []byte{}
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, byte(c))
+	}
+	return string(result)
 }
 
 // startScheduler: 매일 KST 00:00에 모든 배치 실행

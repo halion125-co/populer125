@@ -1758,12 +1758,32 @@ func startOrderPolling(e *echo.Echo) {
 				}
 			}
 
+			// 4. 오늘 전체 판매현황 집계 (DB에서 조회)
+			var todayTotalCount int
+			var todayTotalAmt float64
+			todaySumRow := database.DB.QueryRow(`
+				SELECT COUNT(DISTINCT o.order_id), COALESCE(SUM(oi.sales_price * oi.sales_quantity), 0)
+				FROM orders o
+				LEFT JOIN order_items oi ON o.order_id = oi.order_id AND oi.user_id = o.user_id
+				WHERE o.user_id = ? AND o.paid_at >= ? AND o.paid_at < ?`,
+				u.id, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"))
+			todaySumRow.Scan(&todayTotalCount, &todayTotalAmt)
+
+			// [임시] 신규 주문 없어도 슬랙 발송 (폴링 동작 확인용 - 나중에 주석 처리)
 			if len(newOrders) == 0 {
-				e.Logger.Infof("[order polling] 신규 주문 없음 user=%d", u.id)
+				msg := fmt.Sprintf("[로켓그로스] 신규 주문 없음\n─────────────────\n신규주문이 없습니다.\n─────────────────\n오늘 판매현황 : 총 %d건 / 총 %s원",
+					todayTotalCount,
+					formatComma(int64(todayTotalAmt)),
+				)
+				if err := sendSlackNotification(cfg.SlackWebhookURL, msg); err != nil {
+					e.Logger.Errorf("[order polling] 슬랙 알림 실패 user=%d: %v", u.id, err)
+				} else {
+					e.Logger.Infof("[order polling] 슬랙 알림 전송 완료 (신규 없음) user=%d", u.id)
+				}
 				continue
 			}
 
-			// 4. 슬랙 메시지 작성
+			// 5. 슬랙 메시지 작성 (신규 주문 있는 경우)
 			var totalAmt float64
 			lines := []string{}
 			for _, o := range newOrders {
@@ -1781,17 +1801,6 @@ func startOrderPolling(e *echo.Echo) {
 						formatComma(int64(price))))
 				}
 			}
-
-			// 5. 오늘 전체 판매현황 집계 (DB에서 조회)
-			var todayTotalCount int
-			var todayTotalAmt float64
-			todaySumRow := database.DB.QueryRow(`
-				SELECT COUNT(DISTINCT o.order_id), COALESCE(SUM(oi.sales_price * oi.sales_quantity), 0)
-				FROM orders o
-				LEFT JOIN order_items oi ON o.order_id = oi.order_id AND oi.user_id = o.user_id
-				WHERE o.user_id = ? AND o.paid_at >= ? AND o.paid_at < ?`,
-				u.id, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"))
-			todaySumRow.Scan(&todayTotalCount, &todayTotalAmt)
 
 			msg := fmt.Sprintf("[로켓그로스] 신규 주문 %d건 접수\n─────────────────\n%s\n─────────────────\n오늘 판매현황 : 총 %d건 / 총 %s원",
 				len(newOrders),

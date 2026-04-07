@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, type BarShapeProps } from 'recharts';
@@ -7,13 +7,78 @@ import { formatKST } from '../lib/formatters';
 import type { Order, OrdersResponse } from '../types/order';
 
 interface Filters {
-  orderId: string;
-  productName: string;
+  productNames: string[];
+}
+
+function ProductNameDropdown({
+  options,
+  selected,
+  onChange,
+}: {
+  options: string[];
+  selected: string[];
+  onChange: (names: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const toggle = (name: string) => {
+    if (selected.includes(name)) {
+      onChange(selected.filter(n => n !== name));
+    } else {
+      onChange([...selected, name]);
+    }
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-left bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 flex items-center justify-between"
+      >
+        <span className={selected.length === 0 ? 'text-gray-400' : 'text-gray-800'}>
+          {selected.length === 0
+            ? '상품명 선택...'
+            : selected.length === 1
+            ? selected[0]
+            : `${selected[0]} 외 ${selected.length - 1}개`}
+        </span>
+        <span className="text-gray-400 ml-2">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
+          {options.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-gray-400">상품 없음</div>
+          ) : (
+            options.map(name => (
+              <label key={name} className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer text-sm">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(name)}
+                  onChange={() => toggle(name)}
+                  className="accent-blue-500"
+                />
+                <span className="truncate">{name}</span>
+              </label>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const initialFilters: Filters = {
-  orderId: '',
-  productName: '',
+  productNames: [],
 };
 
 const toKSTDateString = (date: Date) => {
@@ -138,16 +203,28 @@ const OrdersPage = () => {
   // Client-side filtering
   const filteredOrders = useMemo(() => {
     return orders.filter((o: Order) => {
-      if (filters.orderId && !String(o.orderId).includes(filters.orderId)) return false;
-      if (filters.productName) {
-        const itemName = o.orderItems?.[0]?.productName || '';
-        if (!itemName.toLowerCase().includes(filters.productName.toLowerCase())) return false;
+      if (filters.productNames.length > 0) {
+        const matched = (o.orderItems || []).some(item =>
+          filters.productNames.includes(item.productName)
+        );
+        if (!matched) return false;
       }
       return true;
     }).sort((a, b) => b.paidAt.localeCompare(a.paidAt));
   }, [orders, filters]);
 
-  const hasActiveFilters = Object.values(filters).some(v => v !== '');
+  const hasActiveFilters = filters.productNames.length > 0;
+
+  // 판매된 상품명 목록 (드롭다운용)
+  const productNameOptions = useMemo(() => {
+    const set = new Set<string>();
+    orders.forEach((o: Order) => {
+      (o.orderItems || []).forEach(item => {
+        if (item.productName) set.add(item.productName);
+      });
+    });
+    return Array.from(set).sort();
+  }, [orders]);
 
   // 그래프 뷰 모드 (일/시간)
   const [chartView, setChartView] = useState<'day' | 'hour'>('day');
@@ -586,27 +663,13 @@ const OrdersPage = () => {
 
           {showFilters && (
             <div className="px-6 pb-4 border-t border-gray-100 pt-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">주문번호</label>
-                  <input
-                    type="text"
-                    value={filters.orderId}
-                    onChange={e => setFilters({ ...filters, orderId: e.target.value })}
-                    placeholder="주문번호 검색..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">상품명</label>
-                  <input
-                    type="text"
-                    value={filters.productName}
-                    onChange={e => setFilters({ ...filters, productName: e.target.value })}
-                    placeholder="상품명 검색..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-600 mb-1">상품명</label>
+                <ProductNameDropdown
+                  options={productNameOptions}
+                  selected={filters.productNames}
+                  onChange={names => setFilters({ productNames: names })}
+                />
               </div>
               {hasActiveFilters && (
                 <div className="mt-4 flex items-center justify-between">

@@ -713,27 +713,45 @@ function OrderRow({ order }: { order: Order }) {
     return Math.floor(price).toLocaleString('ko-KR') + '원';
   };
 
-  const firstItem = order.orderItems?.[0];
-  const totalQuantity = order.orderItems?.reduce((sum, item) => sum + (item.salesQuantity || 0), 0) || 0;
-  const totalPrice = order.orderItems?.reduce((sum, item) => {
-    return sum + ((item.salesPrice || 0) * (item.salesQuantity || 0));
-  }, 0) || 0;
+  const items = order.orderItems?.length > 0 ? order.orderItems : [{ vendorItemId: 0, productName: '-', salesQuantity: 0, unitPrice: 0, salesPrice: 0 }];
+  const totalPrice = items.reduce((sum, item) => sum + ((item.salesPrice || 0) * (item.salesQuantity || 0)), 0);
 
   return (
-    <tr className="hover:bg-gray-50">
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">{order.orderId}</td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatKST(order.paidAt)}</td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">{firstItem?.vendorItemId || '-'}</td>
-      <td className="px-6 py-4">
-        <div className="text-sm text-gray-900">{firstItem?.productName || '-'}</div>
-        {order.orderItems.length > 1 && (
-          <span className="text-xs text-gray-400">외 {order.orderItems.length - 1}건</span>
-        )}
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">{totalQuantity}</td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">{formatPrice(firstItem?.salesPrice)}</td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium text-right">{formatPrice(totalPrice)}</td>
-    </tr>
+    <>
+      {items.map((item, idx) => (
+        <tr key={`${order.orderId}-${item.vendorItemId}-${idx}`} className={idx === 0 ? 'hover:bg-gray-50' : 'hover:bg-gray-50 bg-gray-50/50'}>
+          {/* 주문번호 · 결제일: 첫 번째 행에만 표시, rowSpan으로 병합 */}
+          {idx === 0 && (
+            <>
+              <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900 font-medium align-top" rowSpan={items.length}>
+                {order.orderId}
+              </td>
+              <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500 align-top" rowSpan={items.length}>
+                {formatKST(order.paidAt)}
+              </td>
+            </>
+          )}
+          <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500 font-mono">
+            {item.vendorItemId || '-'}
+          </td>
+          <td className="px-6 py-3 text-sm text-gray-900">
+            {item.productName || '-'}
+          </td>
+          <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500 text-right">
+            {item.salesQuantity || 0}
+          </td>
+          <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900 text-right">
+            {formatPrice(item.salesPrice)}
+          </td>
+          {/* 총액: 첫 번째 행에만 주문 합계 표시 */}
+          {idx === 0 && (
+            <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900 font-medium text-right align-top" rowSpan={items.length}>
+              {formatPrice(totalPrice)}
+            </td>
+          )}
+        </tr>
+      ))}
+    </>
   );
 }
 

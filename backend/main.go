@@ -72,6 +72,9 @@ func main() {
 	api.POST("/batch/jobs/:jobType/run", runBatchJob)
 	api.GET("/batch/logs", getBatchLogs)
 
+	// 슬랙 즉시 발송
+	api.POST("/slack/send-today", sendTodaySlack)
+
 	// 스케줄러 시작 (매일 KST 00:00)
 	go startScheduler(e)
 	go startOrderPolling(e)
@@ -1560,6 +1563,87 @@ func sendSlackNotification(webhookURL, message string) error {
 	return nil
 }
 
+// sendTodaySlack: 오늘 주문 현황을 슬랙으로 즉시 발송
+func sendTodaySlack(c echo.Context) error {
+	userID := c.Get("user_id").(int64)
+	loc, _ := time.LoadLocation("Asia/Seoul")
+	now := time.Now().In(loc)
+	kstMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC()
+	kstTomorrow := kstMidnight.Add(24 * time.Hour)
+
+	type orderItem struct {
+		ProductName   string  `json:"product_name"`
+		SalesQuantity int     `json:"sales_quantity"`
+		SalesPrice    float64 `json:"sales_price"`
+	}
+	type orderRow struct {
+		OrderID  int64     `json:"order_id"`
+		PaidAt   string    `json:"paid_at"`
+		Items    []orderItem
+	}
+
+	rows, err := database.DB.Query(`
+		SELECT o.order_id, o.paid_at, oi.product_name, oi.sales_quantity, oi.sales_price
+		FROM orders o
+		LEFT JOIN order_items oi ON o.order_id = oi.order_id AND oi.user_id = o.user_id
+		WHERE o.user_id = ? AND o.paid_at >= ? AND o.paid_at < ?
+		ORDER BY o.paid_at ASC`,
+		userID, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"))
+	if err != nil {
+		return c.JSON(500, map[string]string{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	orderMap := map[int64]*orderRow{}
+	var orderKeys []int64
+	var totalAmt float64
+	for rows.Next() {
+		var oid int64
+		var paidAt string
+		var pname string
+		var qty int
+		var price float64
+		rows.Scan(&oid, &paidAt, &pname, &qty, &price)
+		if _, ok := orderMap[oid]; !ok {
+			orderMap[oid] = &orderRow{OrderID: oid, PaidAt: paidAt}
+			orderKeys = append(orderKeys, oid)
+		}
+		if pname != "" {
+			orderMap[oid].Items = append(orderMap[oid].Items, orderItem{pname, qty, price})
+			totalAmt += price * float64(qty)
+		}
+	}
+
+	if len(orderKeys) == 0 {
+		return c.JSON(200, map[string]string{"result": "오늘 주문 없음"})
+	}
+
+	lines := []string{}
+	for _, oid := range orderKeys {
+		o := orderMap[oid]
+		paidKST, _ := time.Parse("2006-01-02T15:04:05Z", o.PaidAt)
+		paidStr := paidKST.In(loc).Format("01/02 15:04")
+		for _, item := range o.Items {
+			lines = append(lines, fmt.Sprintf("• [%s] %s / %d개 / %s원",
+				paidStr, item.ProductName, item.SalesQuantity, formatComma(int64(item.SalesPrice))))
+		}
+	}
+
+	msg := fmt.Sprintf("[로켓그로스] 오늘 주문 현황\n─────────────────\n%s\n─────────────────\n오늘 판매현황 : 총 %d건 / 총 %s원",
+		strings.Join(lines, "\n"),
+		len(orderKeys),
+		formatComma(int64(totalAmt)),
+	)
+
+	if cfg.SlackWebhookURL == "" {
+		return c.JSON(400, map[string]string{"error": "SLACK_WEBHOOK_URL 미설정"})
+	}
+	if err := sendSlackNotification(cfg.SlackWebhookURL, msg); err != nil {
+		return c.JSON(500, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(200, map[string]string{"result": "슬랙 발송 완료", "orders": fmt.Sprintf("%d건", len(orderKeys))})
+}
+
 // startOrderPolling: 30분마다 오늘 주문을 폴링하여 신규 주문 발생 시 슬랙 알림
 func startOrderPolling(e *echo.Echo) {
 	loc, _ := time.LoadLocation("Asia/Seoul")
@@ -1630,7 +1714,7 @@ func startOrderPolling(e *echo.Echo) {
 			// 2. 쿠팡 API 호출 (오늘 날짜)
 			client := coupang.NewClient(u.vendorID, u.accessKey, u.secretKey)
 			path := fmt.Sprintf("/v2/providers/rg_open_api/apis/api/v1/vendors/%s/rg/orders", u.vendorID)
-			query := fmt.Sprintf("createdAtFrom=%s&createdAtTo=%s&maxPerPage=100", todayStr, todayStr)
+			query := fmt.Sprintf("paidDateFrom=%s&paidDateTo=%s&maxPerPage=100", todayStr, todayStr)
 			body, err := client.Request("GET", path, query)
 			if err != nil {
 				e.Logger.Errorf("[order polling] API 호출 실패 user=%d: %v", u.id, err)
@@ -1683,21 +1767,37 @@ func startOrderPolling(e *echo.Echo) {
 			var totalAmt float64
 			lines := []string{}
 			for _, o := range newOrders {
+				// paidAt(Unix ms) → KST 문자열
+				paidKST := time.Unix(o.PaidAt/1000, 0).In(loc).Format("01/02 15:04")
 				for _, oi := range o.OrderItems {
 					var price float64
 					fmt.Sscanf(oi.UnitSalesPrice, "%f", &price)
 					amt := price * float64(oi.SalesQuantity)
 					totalAmt += amt
-					lines = append(lines, fmt.Sprintf("• %s x%d → %s원",
-						oi.ProductName, oi.SalesQuantity,
-						formatComma(int64(amt))))
+					lines = append(lines, fmt.Sprintf("• [%s] %s / %d개 / %s원",
+						paidKST,
+						oi.ProductName,
+						oi.SalesQuantity,
+						formatComma(int64(price))))
 				}
 			}
-			msg := fmt.Sprintf("[로켓그로스] 신규 주문 %d건 접수\n─────────────────\n%s\n─────────────────\n합계: %d건 / %s원",
+
+			// 5. 오늘 전체 판매현황 집계 (DB에서 조회)
+			var todayTotalCount int
+			var todayTotalAmt float64
+			todaySumRow := database.DB.QueryRow(`
+				SELECT COUNT(DISTINCT o.order_id), COALESCE(SUM(oi.sales_price * oi.sales_quantity), 0)
+				FROM orders o
+				LEFT JOIN order_items oi ON o.order_id = oi.order_id AND oi.user_id = o.user_id
+				WHERE o.user_id = ? AND o.paid_at >= ? AND o.paid_at < ?`,
+				u.id, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"))
+			todaySumRow.Scan(&todayTotalCount, &todayTotalAmt)
+
+			msg := fmt.Sprintf("[로켓그로스] 신규 주문 %d건 접수\n─────────────────\n%s\n─────────────────\n오늘 판매현황 : 총 %d건 / 총 %s원",
 				len(newOrders),
 				strings.Join(lines, "\n"),
-				len(newOrders),
-				formatComma(int64(totalAmt)),
+				todayTotalCount,
+				formatComma(int64(todayTotalAmt)),
 			)
 
 			if err := sendSlackNotification(cfg.SlackWebhookURL, msg); err != nil {

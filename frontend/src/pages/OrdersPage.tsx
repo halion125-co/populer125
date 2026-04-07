@@ -169,12 +169,18 @@ const OrdersPage = () => {
   const chartData = useMemo(() => {
     if (effectiveChartView === 'hour') {
       const isSingleDay = rangeDays === 1;
+      // 현재 KST 시간
+      const nowKST = toKSTDate(new Date().toISOString());
+      const nowKSTHour = nowKST.getUTCHours();
+      const nowKSTMin = nowKST.getUTCMinutes();
+      const nowSlot = nowKSTHour * 2 + (nowKSTMin >= 30 ? 1 : 0);
+      // 오늘 날짜(KST) 문자열
+      const todayKST = nowKST.toISOString().slice(0, 10);
 
       if (isSingleDay) {
-        // 하루 조회: 30분 단위 (00:00 ~ 23:30, 총 48 슬롯)
+        // 하루 조회: 30분 단위 (00:00 ~ 현재 슬롯)
         // key: "0" ~ "47" (slot index)
         const slots: number[] = Array(48).fill(0);
-        let lastSlot = -1;
         filteredOrders.forEach((order) => {
           if (!order.paidAt) return;
           const kst = toKSTDate(order.paidAt);
@@ -183,10 +189,11 @@ const OrdersPage = () => {
             (s, item) => s + (item.salesPrice || 0) * (item.salesQuantity || 0), 0
           );
           slots[slot] += sales;
-          if (slot > lastSlot) lastSlot = slot;
         });
 
-        const maxSlot = lastSlot >= 0 ? lastSlot : 47;
+        // 조회 날짜가 오늘이면 현재 슬롯까지, 과거면 47까지
+        const isToday = searchRange.from?.slice(0, 10) === todayKST;
+        const maxSlot = isToday ? nowSlot : 47;
         return Array.from({ length: maxSlot + 1 }, (_, i) => {
           const h = Math.floor(i / 2);
           // 정각 슬롯(i가 짝수)만 시간 표시, 30분 슬롯은 빈 문자열
@@ -232,11 +239,9 @@ const OrdersPage = () => {
         }
       });
 
-      // 마지막 날은 데이터가 있는 마지막 시간까지만 표시
+      // 마지막 날: 오늘이면 현재 KST 시간까지, 과거면 23시까지
       const lastDate = datelist[datelist.length - 1];
-      const lastHour = lastDataKey.startsWith(lastDate)
-        ? parseInt(lastDataKey.split('-')[3] ?? '23', 10)
-        : 23;
+      const lastHour = lastDate === todayKST ? nowKSTHour : 23;
 
       const result: { label: string; sub: string; sales: number }[] = [];
       datelist.forEach((dateKey, di) => {

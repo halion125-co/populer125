@@ -366,15 +366,13 @@ const OrdersPage = () => {
     }
   }, [filteredOrders, effectiveChartView, searchRange]);
 
-  // Y축 단위 결정: 최대값 3만원 이하 → 5천원 단위, 초과 → 만원 단위
+  // Y축 단위: 항상 만원 단위
   const chartYConfig = useMemo(() => {
     const maxSales = Math.max(...chartData.map((d) => d.sales), 0);
-    const unit = maxSales <= 30000 ? 5000 : 10000;
-    const unitLabel = unit === 5000 ? '5천원' : '만원';
-    const divisor = unit === 5000 ? 5000 : 10000;
+    const unit = 10000;
     const tickCount = Math.ceil(maxSales / unit) + 1;
     const ticks = Array.from({ length: tickCount }, (_, i) => i * unit);
-    return { unit, unitLabel, divisor, ticks, maxSales };
+    return { unit, unitLabel: '만원', divisor: 10000, ticks, maxSales };
   }, [chartData]);
 
   const totalSales = useMemo(() => {

@@ -1666,7 +1666,7 @@ func startOrderPolling(e *echo.Echo) {
 		OrderItems []orderItem `json:"orderItems"`
 	}
 
-	// 다음 10분 정각까지 대기 (13:10, 13:20, ... 기준)
+	// 다음 10분 정각까지 대기 후 즉시 실행, 이후 10분마다 반복
 	now := time.Now()
 	nextTick := now.Truncate(10 * time.Minute).Add(10 * time.Minute)
 	time.Sleep(time.Until(nextTick))
@@ -1674,8 +1674,13 @@ func startOrderPolling(e *echo.Echo) {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for tick := true; ; tick = false {
+		if !tick {
+			<-ticker.C
+		}
+		fmt.Printf("[order polling] 폴링 시작: %s\n", time.Now().In(loc).Format("2006-01-02 15:04:05"))
 		if cfg.SlackWebhookURL == "" {
+			fmt.Println("[order polling] SlackWebhookURL 미설정, 스킵")
 			continue
 		}
 

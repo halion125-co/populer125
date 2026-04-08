@@ -78,6 +78,10 @@ func main() {
 	api.PUT("/slack/webhooks/:id", updateSlackWebhook)
 	api.DELETE("/slack/webhooks/:id", deleteSlackWebhook)
 
+	// 슬랙 설정 (폴링 간격)
+	api.GET("/slack/settings", getSlackSettings)
+	api.PUT("/slack/settings", updateSlackSettings)
+
 	// 슬랙 즉시 발송
 	api.POST("/slack/send-today", sendTodaySlack)
 
@@ -1640,6 +1644,40 @@ func deleteSlackWebhook(c echo.Context) error {
 	return c.JSON(200, map[string]string{"message": "삭제 완료"})
 }
 
+// getSlackSettings: 슬랙 설정 조회 (폴링 간격)
+func getSlackSettings(c echo.Context) error {
+	userID := c.Get("user").(*middleware.UserContext).UserID
+	var interval int
+	err := database.DB.QueryRow(
+		`SELECT polling_interval_min FROM users WHERE id=?`, userID,
+	).Scan(&interval)
+	if err != nil {
+		interval = 10
+	}
+	return c.JSON(200, map[string]int{"pollingIntervalMin": interval})
+}
+
+// updateSlackSettings: 슬랙 설정 저장 (폴링 간격)
+func updateSlackSettings(c echo.Context) error {
+	userID := c.Get("user").(*middleware.UserContext).UserID
+	var req struct {
+		PollingIntervalMin int `json:"pollingIntervalMin"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(400, map[string]string{"error": "잘못된 요청"})
+	}
+	if req.PollingIntervalMin < 1 {
+		req.PollingIntervalMin = 1
+	}
+	_, err := database.DB.Exec(
+		`UPDATE users SET polling_interval_min=? WHERE id=?`,
+		req.PollingIntervalMin, userID)
+	if err != nil {
+		return c.JSON(500, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(200, map[string]string{"message": "저장 완료"})
+}
+
 // sendSlackNotification: 슬랙 웹훅으로 메시지 전송
 func sendSlackNotification(webhookURL, message string) error {
 	payload, _ := json.Marshal(map[string]string{"text": message})
@@ -1755,15 +1793,16 @@ func sendTodaySlack(c echo.Context) error {
 	return c.JSON(200, map[string]string{"result": "슬랙 발송 완료", "orders": fmt.Sprintf("%d건", len(orderKeys))})
 }
 
-// startOrderPolling: 30분마다 오늘 주문을 폴링하여 신규 주문 발생 시 슬랙 알림
+// startOrderPolling: 사용자별 설정 간격마다 오늘 주문을 폴링하여 신규 주문 발생 시 슬랙 알림
 func startOrderPolling(e *echo.Echo) {
 	loc, _ := time.LoadLocation("Asia/Seoul")
 
 	type userInfo struct {
-		id        int64
-		vendorID  string
-		accessKey string
-		secretKey string
+		id                 int64
+		vendorID           string
+		accessKey          string
+		secretKey          string
+		pollingIntervalMin int
 	}
 	type orderItem struct {
 		VendorItemId   int64  `json:"vendorItemId"`
@@ -1777,24 +1816,18 @@ func startOrderPolling(e *echo.Echo) {
 		OrderItems []orderItem `json:"orderItems"`
 	}
 
-	// 다음 10분 정각까지 대기 후 즉시 실행, 이후 10분마다 반복
-	now := time.Now()
-	nextTick := now.Truncate(10 * time.Minute).Add(10 * time.Minute)
-	time.Sleep(time.Until(nextTick))
-
-	ticker := time.NewTicker(10 * time.Minute)
+	// 1분 ticker로 돌리고 사용자별 interval 경과 여부로 실행 판단
+	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
+	lastRun := map[int64]time.Time{}
 
-	for tick := true; ; tick = false {
-		if !tick {
-			<-ticker.C
-		}
-		fmt.Printf("[order polling] 폴링 시작: %s\n", time.Now().In(loc).Format("2006-01-02 15:04:05"))
+	for range ticker.C {
+		fmt.Printf("[order polling] 틱: %s\n", time.Now().In(loc).Format("2006-01-02 15:04:05"))
 
 		now := time.Now().In(loc)
 		todayStr := now.Format("2006-01-02")
 
-		rows, err := database.DB.Query(`SELECT id, vendor_id, access_key, secret_key FROM users`)
+		rows, err := database.DB.Query(`SELECT id, vendor_id, access_key, secret_key, COALESCE(polling_interval_min, 10) FROM users`)
 		if err != nil {
 			e.Logger.Errorf("[order polling] 사용자 조회 실패: %v", err)
 			continue
@@ -1802,7 +1835,7 @@ func startOrderPolling(e *echo.Echo) {
 		var users []userInfo
 		for rows.Next() {
 			var u userInfo
-			rows.Scan(&u.id, &u.vendorID, &u.accessKey, &u.secretKey)
+			rows.Scan(&u.id, &u.vendorID, &u.accessKey, &u.secretKey, &u.pollingIntervalMin)
 			if u.vendorID != "" && u.accessKey != "" {
 				users = append(users, u)
 			}
@@ -1810,6 +1843,14 @@ func startOrderPolling(e *echo.Echo) {
 		rows.Close()
 
 		for _, u := range users {
+			// 사용자별 폴링 간격 경과 여부 확인
+			interval := time.Duration(u.pollingIntervalMin) * time.Minute
+			if last, ok := lastRun[u.id]; ok && time.Since(last) < interval {
+				continue
+			}
+			lastRun[u.id] = time.Now()
+			fmt.Printf("[order polling] 폴링 실행 user=%d interval=%dm\n", u.id, u.pollingIntervalMin)
+
 			// 1. DB에서 오늘 날짜 기준 기존 order_id 목록 조회
 			kstMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC()
 			kstTomorrow := kstMidnight.Add(24 * time.Hour)
@@ -1901,7 +1942,7 @@ func startOrderPolling(e *echo.Echo) {
 				continue
 			}
 
-			// [임시] 신규 주문 없어도 슬랙 발송 (폴링 동작 확인용 - 나중에 주석 처리)
+			// 신규 주문 없으면 슬랙 발송 생략
 			if len(newOrders) == 0 {
 				msg := fmt.Sprintf("[로켓그로스] 신규 주문 없음\n─────────────────\n신규주문이 없습니다.\n─────────────────\n오늘 판매현황 : 총 %d건 / 총 %s원",
 					todayTotalCount,

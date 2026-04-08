@@ -69,6 +69,8 @@ const ProfilePage = () => {
   const [webhooks, setWebhooks] = useState<SlackWebhook[]>([]);
   const [webhookForm, setWebhookForm] = useState({ name: '', webhookUrl: '' });
   const [webhookSaving, setWebhookSaving] = useState(false);
+  const [pollingInterval, setPollingInterval] = useState(10);
+  const [pollingIntervalSaving, setPollingIntervalSaving] = useState(false);
 
   useEffect(() => {
     if (auth?.user) {
@@ -131,9 +133,33 @@ const ProfilePage = () => {
     }
   }, []);
 
+  const fetchSlackSettings = useCallback(async () => {
+    try {
+      const res = await apiClient.get<{ pollingIntervalMin: number }>('/api/slack/settings');
+      setPollingInterval(res.data.pollingIntervalMin);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   useEffect(() => {
-    if (activeTab === 'slack') fetchWebhooks();
-  }, [activeTab, fetchWebhooks]);
+    if (activeTab === 'slack') {
+      fetchWebhooks();
+      fetchSlackSettings();
+    }
+  }, [activeTab, fetchWebhooks, fetchSlackSettings]);
+
+  const handlePollingIntervalSave = async () => {
+    setPollingIntervalSaving(true);
+    try {
+      await apiClient.put('/api/slack/settings', { pollingIntervalMin: pollingInterval });
+      showMsg('success', '폴링 간격이 저장되었습니다.');
+    } catch {
+      showMsg('error', '저장에 실패했습니다.');
+    } finally {
+      setPollingIntervalSaving(false);
+    }
+  };
 
   const handleWebhookAdd = async () => {
     if (!webhookForm.webhookUrl) return;
@@ -539,9 +565,37 @@ const ProfilePage = () => {
             {activeTab === 'slack' && (
               <div className="space-y-5 max-w-lg">
                 <p className="text-sm text-gray-500">
-                  슬랙 Incoming Webhook URL을 등록하면 신규 주문 시 해당 채널로 알림이 발송됩니다.
+                  슬랙 Incoming Webhook URL을 등록하면 주문 폴링 시 해당 채널로 알림이 발송됩니다.
                   2개 이상 등록 시 모두 발송됩니다.
                 </p>
+
+                {/* 폴링 간격 설정 */}
+                <div className="border border-gray-200 rounded-md p-4 space-y-3 bg-gray-50">
+                  <h4 className="text-sm font-medium text-gray-700">폴링 간격</h4>
+                  <p className="text-xs text-gray-400">설정한 간격마다 쿠팡 API를 호출하여 신규 주문을 확인합니다.</p>
+                  <div className="flex flex-wrap gap-2">
+                    {[5, 10, 20, 30, 60].map(min => (
+                      <button
+                        key={min}
+                        onClick={() => setPollingInterval(min)}
+                        className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${
+                          pollingInterval === min
+                            ? 'bg-blue-500 text-white border-blue-500'
+                            : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
+                        }`}
+                      >
+                        {min}분
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={handlePollingIntervalSave}
+                    disabled={pollingIntervalSaving}
+                    className="px-5 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-400 font-medium text-sm"
+                  >
+                    {pollingIntervalSaving ? '저장 중...' : '저장'}
+                  </button>
+                </div>
 
                 {/* 웹훅 목록 */}
                 {webhooks.length > 0 ? (

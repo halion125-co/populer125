@@ -306,6 +306,7 @@ func migrateUsers() error {
 		{"address_detail_en", "TEXT DEFAULT ''"},
 		{"customs_type", "TEXT DEFAULT 'personal'"},
 		{"customs_number", "TEXT DEFAULT ''"},
+		{"polling_interval_min", "INTEGER DEFAULT 10"},
 	}
 	for _, col := range cols {
 		DB.Exec("ALTER TABLE users ADD COLUMN " + col.name + " " + col.def)

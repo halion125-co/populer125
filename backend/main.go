@@ -1551,7 +1551,7 @@ func batchSyncOrders(userID int64, vendorID string, client *coupang.Client, from
 
 // getSlackWebhooks: 내 슬랙 웹훅 목록 조회
 func getSlackWebhooks(c echo.Context) error {
-	userID := c.Get("user_id").(int64)
+	userID := c.Get("user").(*middleware.UserContext).UserID
 	rows, err := database.DB.Query(
 		`SELECT id, name, webhook_url, enabled, created_at FROM slack_webhooks WHERE user_id=? ORDER BY id ASC`, userID)
 	if err != nil {
@@ -1582,7 +1582,7 @@ func getSlackWebhooks(c echo.Context) error {
 
 // createSlackWebhook: 슬랙 웹훅 추가
 func createSlackWebhook(c echo.Context) error {
-	userID := c.Get("user_id").(int64)
+	userID := c.Get("user").(*middleware.UserContext).UserID
 	var req struct {
 		Name       string `json:"name"`
 		WebhookURL string `json:"webhookUrl"`
@@ -1605,7 +1605,7 @@ func createSlackWebhook(c echo.Context) error {
 
 // updateSlackWebhook: 슬랙 웹훅 수정
 func updateSlackWebhook(c echo.Context) error {
-	userID := c.Get("user_id").(int64)
+	userID := c.Get("user").(*middleware.UserContext).UserID
 	webhookID := c.Param("id")
 	var req struct {
 		Name       string `json:"name"`
@@ -1630,7 +1630,7 @@ func updateSlackWebhook(c echo.Context) error {
 
 // deleteSlackWebhook: 슬랙 웹훅 삭제
 func deleteSlackWebhook(c echo.Context) error {
-	userID := c.Get("user_id").(int64)
+	userID := c.Get("user").(*middleware.UserContext).UserID
 	webhookID := c.Param("id")
 	_, err := database.DB.Exec(
 		`DELETE FROM slack_webhooks WHERE id=? AND user_id=?`, webhookID, userID)
@@ -1662,7 +1662,7 @@ func sendSlackNotification(webhookURL, message string) error {
 
 // sendTodaySlack: 오늘 주문 현황을 슬랙으로 즉시 발송
 func sendTodaySlack(c echo.Context) error {
-	userID := c.Get("user_id").(int64)
+	userID := c.Get("user").(*middleware.UserContext).UserID
 	loc, _ := time.LoadLocation("Asia/Seoul")
 	now := time.Now().In(loc)
 	kstMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC()

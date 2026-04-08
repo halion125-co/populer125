@@ -1727,6 +1727,7 @@ func startOrderPolling(e *echo.Echo) {
 				continue
 			}
 
+			e.Logger.Infof("[order polling] API 응답 user=%d: %s", u.id, string(body))
 			var resp struct {
 				Data []json.RawMessage `json:"data"`
 			}
@@ -1734,6 +1735,7 @@ func startOrderPolling(e *echo.Echo) {
 				e.Logger.Errorf("[order polling] 응답 파싱 실패 user=%d: %v", u.id, err)
 				continue
 			}
+			e.Logger.Infof("[order polling] API 주문 건수 user=%d: %d건", u.id, len(resp.Data))
 
 			// 3. 신규 주문 감지 및 DB 저장
 			var newOrders []order

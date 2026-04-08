@@ -702,28 +702,36 @@ const OrdersPage = () => {
             )}
           </div>
         ) : (
-          <div className="bg-white rounded-lg shadow overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">주문번호</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">결제일</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">옵션ID</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">상품명</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">수량</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">판매금액</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">총액</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredOrders.map((order: Order) => (
-                    <OrderRow key={order.orderId} order={order} />
-                  ))}
-                </tbody>
-              </table>
+          <>
+            {/* PC 테이블 (md 이상) */}
+            <div className="hidden md:block bg-white rounded-lg shadow overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">결제일</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">옵션ID</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">상품명</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">수량</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">총액</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {filteredOrders.map((order: Order) => (
+                      <OrderRow key={order.orderId} order={order} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+
+            {/* 모바일 카드 (md 미만) */}
+            <div className="md:hidden space-y-3">
+              {filteredOrders.map((order: Order) => (
+                <OrderCard key={order.orderId} order={order} />
+              ))}
+            </div>
+          </>
         )}
       </main>
     </div>
@@ -773,12 +781,12 @@ function Header({
   );
 }
 
-function OrderRow({ order }: { order: Order }) {
-  const formatPrice = (price: number | undefined) => {
-    if (price === undefined || price === null) return '-';
-    return Math.floor(price).toLocaleString('ko-KR') + '원';
-  };
+const formatPrice = (price: number | undefined) => {
+  if (price === undefined || price === null) return '-';
+  return Math.floor(price).toLocaleString('ko-KR') + '원';
+};
 
+function OrderRow({ order }: { order: Order }) {
   const items = order.orderItems?.length > 0 ? order.orderItems : [{ vendorItemId: 0, productName: '-', salesQuantity: 0, unitPrice: 0, salesPrice: 0 }];
   const totalPrice = items.reduce((sum, item) => sum + ((item.salesPrice || 0) * (item.salesQuantity || 0)), 0);
 
@@ -786,16 +794,10 @@ function OrderRow({ order }: { order: Order }) {
     <>
       {items.map((item, idx) => (
         <tr key={`${order.orderId}-${item.vendorItemId}-${idx}`} className={idx === 0 ? 'hover:bg-gray-50' : 'hover:bg-gray-50 bg-gray-50/50'}>
-          {/* 주문번호 · 결제일: 첫 번째 행에만 표시, rowSpan으로 병합 */}
           {idx === 0 && (
-            <>
-              <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900 font-medium align-top" rowSpan={items.length}>
-                {order.orderId}
-              </td>
-              <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500 align-top" rowSpan={items.length}>
-                {formatKST(order.paidAt)}
-              </td>
-            </>
+            <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500 align-top" rowSpan={items.length}>
+              {formatKST(order.paidAt)}
+            </td>
           )}
           <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500 font-mono">
             {item.vendorItemId || '-'}
@@ -806,10 +808,6 @@ function OrderRow({ order }: { order: Order }) {
           <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500 text-right">
             {item.salesQuantity || 0}
           </td>
-          <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900 text-right">
-            {formatPrice(item.salesPrice)}
-          </td>
-          {/* 총액: 첫 번째 행에만 주문 합계 표시 */}
           {idx === 0 && (
             <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900 font-medium text-right align-top" rowSpan={items.length}>
               {formatPrice(totalPrice)}
@@ -818,6 +816,30 @@ function OrderRow({ order }: { order: Order }) {
         </tr>
       ))}
     </>
+  );
+}
+
+function OrderCard({ order }: { order: Order }) {
+  const items = order.orderItems?.length > 0 ? order.orderItems : [{ vendorItemId: 0, productName: '-', salesQuantity: 0, unitPrice: 0, salesPrice: 0 }];
+  const totalPrice = items.reduce((sum, item) => sum + ((item.salesPrice || 0) * (item.salesQuantity || 0)), 0);
+
+  return (
+    <div className="bg-white rounded-lg shadow p-4">
+      <div className="text-xs text-gray-400 mb-2">{formatKST(order.paidAt)}</div>
+      <div className="space-y-2">
+        {items.map((item, idx) => (
+          <div key={`${order.orderId}-${item.vendorItemId}-${idx}`} className="flex items-start justify-between gap-2">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-gray-900 leading-snug">{item.productName || '-'}</p>
+              <p className="text-xs text-gray-400 mt-0.5">옵션ID: {item.vendorItemId || '-'} · {item.salesQuantity || 0}개</p>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 pt-2 border-t border-gray-100 flex justify-end">
+        <span className="text-sm font-semibold text-gray-800">{formatPrice(totalPrice)}</span>
+      </div>
+    </div>
   );
 }
 

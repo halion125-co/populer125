@@ -509,19 +509,19 @@ const OrdersPage = () => {
           </div>
           <div className="grid grid-cols-4 gap-2 mb-3">
             <button
-              onClick={() => { const today = toKSTDateString(new Date()); handleQuickRange(today, today); }}
+              onClick={() => { const today = toKSTDateString(new Date()); handleQuickRange(today, today); setChartView('hour'); }}
               className="py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-center"
             >오늘</button>
             <button
-              onClick={() => { const d = toKSTDateString(new Date(Date.now() - 24 * 60 * 60 * 1000)); handleQuickRange(d, d); }}
+              onClick={() => { const d = toKSTDateString(new Date(Date.now() - 24 * 60 * 60 * 1000)); handleQuickRange(d, d); setChartView('hour'); }}
               className="py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-center"
             >어제</button>
             <button
-              onClick={() => { const now = new Date(); handleQuickRange(toKSTDateString(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)), toKSTDateString(now)); }}
+              onClick={() => { const now = new Date(); handleQuickRange(toKSTDateString(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)), toKSTDateString(now)); setChartView('day'); }}
               className="py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-center"
             >7일</button>
             <button
-              onClick={() => { const now = new Date(); handleQuickRange(toKSTDateString(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)), toKSTDateString(now)); }}
+              onClick={() => { const now = new Date(); handleQuickRange(toKSTDateString(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)), toKSTDateString(now)); setChartView('day'); }}
               className="py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-center"
             >30일</button>
           </div>
@@ -586,10 +586,18 @@ const OrdersPage = () => {
                 tick={(props) => {
                   const { x, y, payload, index } = props;
                   const sub = chartData[index]?.sub ?? '';
-                  // 모바일 + 일 단위: 데이터 수에 따라 5일/10일 간격으로 축소
-                  if (isMobile && effectiveChartView === 'day') {
-                    const step = chartData.length > 20 ? 10 : chartData.length > 10 ? 5 : 1;
-                    if (index % step !== 0) return <g />;
+                  // 모바일 전용 간격 축소
+                  if (isMobile) {
+                    if (effectiveChartView === 'day') {
+                      // 일 단위: 데이터 수에 따라 5일/10일 간격
+                      const step = chartData.length > 20 ? 10 : chartData.length > 10 ? 5 : 1;
+                      if (index % step !== 0) return <g />;
+                    } else {
+                      // 시간/30분 단위: 3시간(=6슬롯) 간격, label 없는 슬롯 제외
+                      if (!payload.value) return <g />;
+                      const labelHour = parseInt(payload.value, 10);
+                      if (labelHour % 3 !== 0) return <g />;
+                    }
                   }
                   return (
                     <g transform={`translate(${x},${y})`}>

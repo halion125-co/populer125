@@ -1674,7 +1674,7 @@ func startOrderPolling(e *echo.Echo) {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
 
-	for ; ; <-ticker.C {
+	for range ticker.C {
 		if cfg.SlackWebhookURL == "" {
 			continue
 		}

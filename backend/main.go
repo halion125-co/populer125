@@ -1666,9 +1666,15 @@ func startOrderPolling(e *echo.Echo) {
 		OrderItems []orderItem `json:"orderItems"`
 	}
 
-	for {
-		time.Sleep(30 * time.Minute)
+	// 다음 10분 정각까지 대기 (13:10, 13:20, ... 기준)
+	now := time.Now()
+	nextTick := now.Truncate(10 * time.Minute).Add(10 * time.Minute)
+	time.Sleep(time.Until(nextTick))
 
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for ; ; <-ticker.C {
 		if cfg.SlackWebhookURL == "" {
 			continue
 		}

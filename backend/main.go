@@ -1722,25 +1722,22 @@ func startOrderPolling(e *echo.Echo) {
 			}
 			existRows.Close()
 
-			// 2. 쿠팡 API 호출 (오늘 날짜)
+			// 2. 쿠팡 API 호출 (동기화 버튼과 동일한 GetOrders 사용)
 			client := coupang.NewClient(u.vendorID, u.accessKey, u.secretKey)
-			path := fmt.Sprintf("/v2/providers/rg_open_api/apis/api/v1/vendors/%s/rg/orders", u.vendorID)
-			query := fmt.Sprintf("paidDateFrom=%s&paidDateTo=%s&maxPerPage=100", todayStr, todayStr)
-			body, err := client.Request("GET", path, query)
+			body, err := client.GetOrders(todayStr, todayStr)
 			if err != nil {
-				e.Logger.Errorf("[order polling] API 호출 실패 user=%d: %v", u.id, err)
+				fmt.Printf("[order polling] API 호출 실패 user=%d: %v\n", u.id, err)
 				continue
 			}
 
-			e.Logger.Infof("[order polling] API 응답 user=%d: %s", u.id, string(body))
 			var resp struct {
 				Data []json.RawMessage `json:"data"`
 			}
 			if err := json.Unmarshal(body, &resp); err != nil {
-				e.Logger.Errorf("[order polling] 응답 파싱 실패 user=%d: %v", u.id, err)
+				fmt.Printf("[order polling] 응답 파싱 실패 user=%d: %v\n", u.id, err)
 				continue
 			}
-			e.Logger.Infof("[order polling] API 주문 건수 user=%d: %d건", u.id, len(resp.Data))
+			fmt.Printf("[order polling] API 주문 건수 user=%d: %d건\n", u.id, len(resp.Data))
 
 			// 3. 신규 주문 감지 및 DB 저장
 			var newOrders []order

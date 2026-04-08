@@ -101,6 +101,12 @@ const OrdersPage = () => {
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [showFilters, setShowFilters] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
 
   // 날짜 입력 상태 (UI용 - 즉시 반응)
   const [dateInput, setDateInput] = useState(getDefaultRange);
@@ -405,7 +411,7 @@ const OrdersPage = () => {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-100">
-        <Header onBack={() => navigate({ to: '/' })} onSync={() => syncMutation.mutate({ force: false })} isSyncing={syncMutation.isPending} lastSyncedAt={lastSyncedAt} syncDateRange={dateInput} />
+        <Header onBack={() => navigate({ to: '/' })} onSync={() => syncMutation.mutate({ force: false })} isSyncing={syncMutation.isPending} lastSyncedAt={lastSyncedAt} syncDateRange={dateInput} isMobile={isMobile} />
         <main className="max-w-7xl mx-auto px-4 py-8">
           <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
             <p className="text-red-600 font-medium mb-2">주문 목록을 불러올 수 없습니다</p>
@@ -427,6 +433,7 @@ const OrdersPage = () => {
         isSyncing={syncMutation.isPending}
         lastSyncedAt={lastSyncedAt}
         syncDateRange={dateInput}
+        isMobile={isMobile}
       />
 
       {/* 중복 기간 확인 다이얼로그 */}
@@ -599,6 +606,11 @@ const OrdersPage = () => {
                 tick={(props) => {
                   const { x, y, payload, index } = props;
                   const sub = chartData[index]?.sub ?? '';
+                  // 모바일 + 일 단위: 데이터 수에 따라 5일/10일 간격으로 축소
+                  if (isMobile && effectiveChartView === 'day') {
+                    const step = chartData.length > 20 ? 10 : chartData.length > 10 ? 5 : 1;
+                    if (index % step !== 0) return <g />;
+                  }
                   return (
                     <g transform={`translate(${x},${y})`}>
                       <text x={0} y={0} dy={12} textAnchor="middle" fontSize={11} fill="#6b7280">{payload.value}</text>
@@ -744,13 +756,43 @@ function Header({
   isSyncing,
   lastSyncedAt,
   syncDateRange,
+  isMobile,
 }: {
   onBack: () => void;
   onSync: () => void;
   isSyncing: boolean;
   lastSyncedAt: string;
   syncDateRange: { from: string; to: string };
+  isMobile: boolean;
 }) {
+  if (isMobile) {
+    return (
+      <header className="bg-white shadow">
+        <div className="px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button onClick={onBack} className="text-blue-600 hover:text-blue-800 font-medium text-sm">
+              &larr; 뒤로
+            </button>
+            <h1 className="text-lg font-bold text-gray-800">주문 관리</h1>
+          </div>
+          <button
+            onClick={onSync}
+            disabled={isSyncing}
+            className="px-3 py-1.5 bg-green-500 text-white rounded hover:bg-green-600 text-sm disabled:opacity-60 flex items-center gap-1.5"
+          >
+            {isSyncing && <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
+            {isSyncing ? '동기화 중...' : '동기화'}
+          </button>
+        </div>
+        {lastSyncedAt && (
+          <div className="px-4 pb-2 text-xs text-gray-400">
+            마지막 동기화: {formatKST(lastSyncedAt)}
+          </div>
+        )}
+      </header>
+    );
+  }
+
   return (
     <header className="bg-white shadow">
       <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">

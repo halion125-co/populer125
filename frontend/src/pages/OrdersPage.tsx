@@ -488,69 +488,49 @@ const OrdersPage = () => {
         </div>
       )}
 
-      <main className="max-w-7xl mx-auto px-4 py-8">
+      <main className="max-w-7xl mx-auto px-4 py-4 md:py-8">
         {/* Date Range Selector */}
-        <div className="mb-6 bg-white p-4 rounded-lg shadow">
-          <div className="flex items-center gap-4 flex-wrap">
-            <span className="text-sm font-medium text-gray-700">조회 기간</span>
+        <div className="mb-4 bg-white p-4 rounded-lg shadow">
+          {/* 모바일: 날짜 한 줄 + 버튼 2x2 그리드 */}
+          <div className="flex items-center gap-2 mb-3">
             <input
               type="date"
               value={dateInput.from}
               onChange={(e) => setDateInput({ ...dateInput, from: e.target.value })}
-              className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 px-2 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-            <span className="text-gray-400">~</span>
+            <span className="text-gray-400 text-sm">~</span>
             <input
               type="date"
               value={dateInput.to}
               onChange={(e) => setDateInput({ ...dateInput, to: e.target.value })}
-              className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 px-2 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-            <div className="flex gap-2 flex-wrap">
-              <button
-                onClick={() => {
-                  const today = toKSTDateString(new Date());
-                  handleQuickRange(today, today);
-                }}
-                className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                오늘
-              </button>
-              <button
-                onClick={() => {
-                  const d = toKSTDateString(new Date(Date.now() - 24 * 60 * 60 * 1000));
-                  handleQuickRange(d, d);
-                }}
-                className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                어제
-              </button>
-              <button
-                onClick={() => {
-                  const now = new Date();
-                  handleQuickRange(toKSTDateString(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)), toKSTDateString(now));
-                }}
-                className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                최근 7일
-              </button>
-              <button
-                onClick={() => {
-                  const now = new Date();
-                  handleQuickRange(toKSTDateString(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)), toKSTDateString(now));
-                }}
-                className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                최근 30일
-              </button>
-            </div>
-            <button
-              onClick={handleSearch}
-              className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm hover:bg-blue-600 font-medium"
-            >
-              검색
-            </button>
           </div>
+          <div className="grid grid-cols-4 gap-2 mb-3">
+            <button
+              onClick={() => { const today = toKSTDateString(new Date()); handleQuickRange(today, today); }}
+              className="py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-center"
+            >오늘</button>
+            <button
+              onClick={() => { const d = toKSTDateString(new Date(Date.now() - 24 * 60 * 60 * 1000)); handleQuickRange(d, d); }}
+              className="py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-center"
+            >어제</button>
+            <button
+              onClick={() => { const now = new Date(); handleQuickRange(toKSTDateString(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)), toKSTDateString(now)); }}
+              className="py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-center"
+            >7일</button>
+            <button
+              onClick={() => { const now = new Date(); handleQuickRange(toKSTDateString(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)), toKSTDateString(now)); }}
+              className="py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-center"
+            >30일</button>
+          </div>
+          <button
+            onClick={handleSearch}
+            className="w-full md:w-auto px-4 py-2 bg-blue-500 text-white rounded-md text-sm hover:bg-blue-600 font-medium"
+          >
+            검색
+          </button>
           {searchRange.from !== dateInput.from || searchRange.to !== dateInput.to ? (
             <p className="mt-2 text-xs text-orange-500">날짜가 변경되었습니다. 검색 버튼을 눌러 적용하세요.</p>
           ) : null}
@@ -560,20 +540,20 @@ const OrdersPage = () => {
         </div>
 
         {/* Stats */}
-        <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white p-4 rounded-lg shadow">
-            <p className="text-sm text-gray-500">총 주문</p>
-            <p className="text-2xl font-bold text-blue-600">
-              {hasActiveFilters ? `${filteredOrders.length} / ${orders.length}` : orders.length}
+        <div className="mb-4 grid grid-cols-3 md:grid-cols-3 gap-2 md:gap-4">
+          <div className="bg-white p-3 md:p-4 rounded-lg shadow">
+            <p className="text-xs md:text-sm text-gray-500">총 주문</p>
+            <p className="text-lg md:text-2xl font-bold text-blue-600">
+              {hasActiveFilters ? `${filteredOrders.length}/${orders.length}` : orders.length}
             </p>
           </div>
-          <div className="bg-white p-4 rounded-lg shadow">
-            <p className="text-sm text-gray-500">총 판매수량</p>
-            <p className="text-2xl font-bold text-green-600">{totalItems}개</p>
+          <div className="bg-white p-3 md:p-4 rounded-lg shadow">
+            <p className="text-xs md:text-sm text-gray-500">판매수량</p>
+            <p className="text-lg md:text-2xl font-bold text-green-600">{totalItems}개</p>
           </div>
-          <div className="bg-white p-4 rounded-lg shadow">
-            <p className="text-sm text-gray-500">총 판매금액</p>
-            <p className="text-2xl font-bold text-orange-600">{totalSales.toLocaleString('ko-KR')}원</p>
+          <div className="bg-white p-3 md:p-4 rounded-lg shadow">
+            <p className="text-xs md:text-sm text-gray-500">판매금액</p>
+            <p className="text-base md:text-2xl font-bold text-orange-600 break-all">{totalSales.toLocaleString('ko-KR')}원</p>
           </div>
         </div>
 

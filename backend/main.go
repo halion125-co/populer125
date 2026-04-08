@@ -1944,17 +1944,18 @@ func startOrderPolling(e *echo.Echo) {
 
 			// 신규 주문 없으면 슬랙 발송 생략
 			if len(newOrders) == 0 {
-				msg := fmt.Sprintf("[로켓그로스] 신규 주문 없음\n─────────────────\n신규주문이 없습니다.\n─────────────────\n오늘 판매현황 : 총 %d건 / 총 %s원",
-					todayTotalCount,
-					formatComma(int64(todayTotalAmt)),
-				)
-				for _, wurl := range userWebhooks {
-					if err := sendSlackNotification(wurl, msg); err != nil {
-						e.Logger.Errorf("[order polling] 슬랙 알림 실패 user=%d: %v", u.id, err)
-					} else {
-						e.Logger.Infof("[order polling] 슬랙 알림 전송 완료 (신규 없음) user=%d", u.id)
-					}
-				}
+				// [임시 비활성] 신규 주문 없어도 슬랙 발송 (폴링 동작 확인용)
+				// msg := fmt.Sprintf("[로켓그로스] 신규 주문 없음\n─────────────────\n신규주문이 없습니다.\n─────────────────\n오늘 판매현황 : 총 %d건 / 총 %s원",
+				// 	todayTotalCount,
+				// 	formatComma(int64(todayTotalAmt)),
+				// )
+				// for _, wurl := range userWebhooks {
+				// 	if err := sendSlackNotification(wurl, msg); err != nil {
+				// 		e.Logger.Errorf("[order polling] 슬랙 알림 실패 user=%d: %v", u.id, err)
+				// 	} else {
+				// 		e.Logger.Infof("[order polling] 슬랙 알림 전송 완료 (신규 없음) user=%d", u.id)
+				// 	}
+				// }
 				continue
 			}
 

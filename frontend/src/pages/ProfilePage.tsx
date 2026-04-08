@@ -3,7 +3,15 @@ import { useNavigate } from '@tanstack/react-router';
 import { AuthContext } from '../contexts/AuthContext';
 import { apiClient } from '../lib/api';
 
-type Tab = 'basic' | 'coupang' | 'security';
+type Tab = 'basic' | 'coupang' | 'security' | 'slack';
+
+interface SlackWebhook {
+  id: number;
+  name: string;
+  webhookUrl: string;
+  enabled: boolean;
+  createdAt: string;
+}
 
 declare global {
   interface Window {
@@ -58,6 +66,10 @@ const ProfilePage = () => {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const [webhooks, setWebhooks] = useState<SlackWebhook[]>([]);
+  const [webhookForm, setWebhookForm] = useState({ name: '', webhookUrl: '' });
+  const [webhookSaving, setWebhookSaving] = useState(false);
+
   useEffect(() => {
     if (auth?.user) {
       setBasicForm({
@@ -109,6 +121,57 @@ const ProfilePage = () => {
       },
     }).open();
   }, []);
+
+  const fetchWebhooks = useCallback(async () => {
+    try {
+      const res = await apiClient.get<SlackWebhook[]>('/api/slack/webhooks');
+      setWebhooks(res.data);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'slack') fetchWebhooks();
+  }, [activeTab, fetchWebhooks]);
+
+  const handleWebhookAdd = async () => {
+    if (!webhookForm.webhookUrl) return;
+    setWebhookSaving(true);
+    try {
+      await apiClient.post('/api/slack/webhooks', webhookForm);
+      setWebhookForm({ name: '', webhookUrl: '' });
+      await fetchWebhooks();
+      showMsg('success', '웹훅이 추가되었습니다.');
+    } catch {
+      showMsg('error', '추가에 실패했습니다.');
+    } finally {
+      setWebhookSaving(false);
+    }
+  };
+
+  const handleWebhookToggle = async (w: SlackWebhook) => {
+    try {
+      await apiClient.put(`/api/slack/webhooks/${w.id}`, {
+        name: w.name,
+        webhookUrl: w.webhookUrl,
+        enabled: !w.enabled,
+      });
+      await fetchWebhooks();
+    } catch {
+      showMsg('error', '수정에 실패했습니다.');
+    }
+  };
+
+  const handleWebhookDelete = async (id: number) => {
+    if (!confirm('삭제하시겠습니까?')) return;
+    try {
+      await apiClient.delete(`/api/slack/webhooks/${id}`);
+      await fetchWebhooks();
+    } catch {
+      showMsg('error', '삭제에 실패했습니다.');
+    }
+  };
 
   const showMsg = (type: 'success' | 'error', text: string) => {
     setMessage({ type, text });
@@ -203,6 +266,7 @@ const ProfilePage = () => {
     { key: 'basic', label: '기본 정보' },
     { key: 'coupang', label: '쿠팡 API' },
     { key: 'security', label: '보안' },
+    { key: 'slack', label: '슬랙 알림' },
   ];
 
   const inputClass = 'w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm';
@@ -468,6 +532,76 @@ const ProfilePage = () => {
                 >
                   {saving ? '저장 중...' : '저장'}
                 </button>
+              </div>
+            )}
+
+            {/* 슬랙 알림 탭 */}
+            {activeTab === 'slack' && (
+              <div className="space-y-5 max-w-lg">
+                <p className="text-sm text-gray-500">
+                  슬랙 Incoming Webhook URL을 등록하면 신규 주문 시 해당 채널로 알림이 발송됩니다.
+                  2개 이상 등록 시 모두 발송됩니다.
+                </p>
+
+                {/* 웹훅 목록 */}
+                {webhooks.length > 0 ? (
+                  <div className="divide-y divide-gray-100 border border-gray-200 rounded-md overflow-hidden">
+                    {webhooks.map(w => (
+                      <div key={w.id} className="flex items-center gap-3 px-4 py-3 bg-white">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{w.name || '(이름 없음)'}</p>
+                          <p className="text-xs text-gray-400 truncate">{w.webhookUrl.slice(0, 55)}{w.webhookUrl.length > 55 ? '...' : ''}</p>
+                        </div>
+                        <button
+                          onClick={() => handleWebhookToggle(w)}
+                          className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full transition-colors ${w.enabled ? 'bg-blue-500' : 'bg-gray-300'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 mt-0.5 rounded-full bg-white shadow transition-transform ${w.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                        </button>
+                        <button
+                          onClick={() => handleWebhookDelete(w.id)}
+                          className="text-red-400 hover:text-red-600 text-sm px-2"
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-400">등록된 웹훅이 없습니다.</p>
+                )}
+
+                {/* 추가 폼 */}
+                <div className="border border-gray-200 rounded-md p-4 space-y-3 bg-gray-50">
+                  <h4 className="text-sm font-medium text-gray-700">웹훅 추가</h4>
+                  <div>
+                    <label className={labelClass}>이름 (예: 로컬, NAS운영)</label>
+                    <input
+                      type="text"
+                      value={webhookForm.name}
+                      onChange={e => setWebhookForm(f => ({ ...f, name: e.target.value }))}
+                      className={inputClass}
+                      placeholder="채널 식별용 이름"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Webhook URL</label>
+                    <input
+                      type="text"
+                      value={webhookForm.webhookUrl}
+                      onChange={e => setWebhookForm(f => ({ ...f, webhookUrl: e.target.value }))}
+                      className={inputClass}
+                      placeholder="https://hooks.slack.com/services/..."
+                    />
+                  </div>
+                  <button
+                    onClick={handleWebhookAdd}
+                    disabled={webhookSaving || !webhookForm.webhookUrl}
+                    className="px-5 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-400 font-medium text-sm"
+                  >
+                    {webhookSaving ? '저장 중...' : '추가'}
+                  </button>
+                </div>
               </div>
             )}
 

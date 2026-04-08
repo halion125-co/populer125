@@ -258,6 +258,22 @@ func createTables() error {
 			finished_at  DATETIME
 		);
 	`)
+	if err != nil {
+		return err
+	}
+
+	// 슬랙 웹훅 테이블
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS slack_webhooks (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id     INTEGER NOT NULL,
+			name        TEXT NOT NULL DEFAULT '',
+			webhook_url TEXT NOT NULL,
+			enabled     INTEGER NOT NULL DEFAULT 1,
+			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (user_id) REFERENCES users(id)
+		);
+	`)
 	return err
 }
 

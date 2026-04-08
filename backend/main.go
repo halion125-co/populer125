@@ -72,6 +72,12 @@ func main() {
 	api.POST("/batch/jobs/:jobType/run", runBatchJob)
 	api.GET("/batch/logs", getBatchLogs)
 
+	// 슬랙 웹훅 관리
+	api.GET("/slack/webhooks", getSlackWebhooks)
+	api.POST("/slack/webhooks", createSlackWebhook)
+	api.PUT("/slack/webhooks/:id", updateSlackWebhook)
+	api.DELETE("/slack/webhooks/:id", deleteSlackWebhook)
+
 	// 슬랙 즉시 발송
 	api.POST("/slack/send-today", sendTodaySlack)
 
@@ -1543,6 +1549,97 @@ func batchSyncOrders(userID int64, vendorID string, client *coupang.Client, from
 	return count, nil
 }
 
+// getSlackWebhooks: 내 슬랙 웹훅 목록 조회
+func getSlackWebhooks(c echo.Context) error {
+	userID := c.Get("user_id").(int64)
+	rows, err := database.DB.Query(
+		`SELECT id, name, webhook_url, enabled, created_at FROM slack_webhooks WHERE user_id=? ORDER BY id ASC`, userID)
+	if err != nil {
+		return c.JSON(500, map[string]string{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	type webhook struct {
+		ID         int64  `json:"id"`
+		Name       string `json:"name"`
+		WebhookURL string `json:"webhookUrl"`
+		Enabled    bool   `json:"enabled"`
+		CreatedAt  string `json:"createdAt"`
+	}
+	var list []webhook
+	for rows.Next() {
+		var w webhook
+		var enabled int
+		rows.Scan(&w.ID, &w.Name, &w.WebhookURL, &enabled, &w.CreatedAt)
+		w.Enabled = enabled == 1
+		list = append(list, w)
+	}
+	if list == nil {
+		list = []webhook{}
+	}
+	return c.JSON(200, list)
+}
+
+// createSlackWebhook: 슬랙 웹훅 추가
+func createSlackWebhook(c echo.Context) error {
+	userID := c.Get("user_id").(int64)
+	var req struct {
+		Name       string `json:"name"`
+		WebhookURL string `json:"webhookUrl"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(400, map[string]string{"error": "잘못된 요청"})
+	}
+	if req.WebhookURL == "" {
+		return c.JSON(400, map[string]string{"error": "webhookUrl 필수"})
+	}
+	res, err := database.DB.Exec(
+		`INSERT INTO slack_webhooks (user_id, name, webhook_url) VALUES (?, ?, ?)`,
+		userID, req.Name, req.WebhookURL)
+	if err != nil {
+		return c.JSON(500, map[string]string{"error": err.Error()})
+	}
+	id, _ := res.LastInsertId()
+	return c.JSON(201, map[string]interface{}{"id": id, "message": "추가 완료"})
+}
+
+// updateSlackWebhook: 슬랙 웹훅 수정
+func updateSlackWebhook(c echo.Context) error {
+	userID := c.Get("user_id").(int64)
+	webhookID := c.Param("id")
+	var req struct {
+		Name       string `json:"name"`
+		WebhookURL string `json:"webhookUrl"`
+		Enabled    *bool  `json:"enabled"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(400, map[string]string{"error": "잘못된 요청"})
+	}
+	enabledVal := 1
+	if req.Enabled != nil && !*req.Enabled {
+		enabledVal = 0
+	}
+	_, err := database.DB.Exec(
+		`UPDATE slack_webhooks SET name=?, webhook_url=?, enabled=? WHERE id=? AND user_id=?`,
+		req.Name, req.WebhookURL, enabledVal, webhookID, userID)
+	if err != nil {
+		return c.JSON(500, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(200, map[string]string{"message": "수정 완료"})
+}
+
+// deleteSlackWebhook: 슬랙 웹훅 삭제
+func deleteSlackWebhook(c echo.Context) error {
+	userID := c.Get("user_id").(int64)
+	webhookID := c.Param("id")
+	_, err := database.DB.Exec(
+		`DELETE FROM slack_webhooks WHERE id=? AND user_id=?`, webhookID, userID)
+	if err != nil {
+		return c.JSON(500, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(200, map[string]string{"message": "삭제 완료"})
+}
+
 // sendSlackNotification: 슬랙 웹훅으로 메시지 전송
 func sendSlackNotification(webhookURL, message string) error {
 	payload, _ := json.Marshal(map[string]string{"text": message})
@@ -1635,11 +1732,25 @@ func sendTodaySlack(c echo.Context) error {
 		formatComma(int64(totalAmt)),
 	)
 
-	if cfg.SlackWebhookURL == "" {
-		return c.JSON(400, map[string]string{"error": "SLACK_WEBHOOK_URL 미설정"})
-	}
-	if err := sendSlackNotification(cfg.SlackWebhookURL, msg); err != nil {
+	whRows, err := database.DB.Query(
+		`SELECT webhook_url FROM slack_webhooks WHERE user_id=? AND enabled=1`, userID)
+	if err != nil {
 		return c.JSON(500, map[string]string{"error": err.Error()})
+	}
+	var webhooks []string
+	for whRows.Next() {
+		var url string
+		whRows.Scan(&url)
+		webhooks = append(webhooks, url)
+	}
+	whRows.Close()
+	if len(webhooks) == 0 {
+		return c.JSON(400, map[string]string{"error": "등록된 슬랙 웹훅 없음"})
+	}
+	for _, url := range webhooks {
+		if err := sendSlackNotification(url, msg); err != nil {
+			return c.JSON(500, map[string]string{"error": err.Error()})
+		}
 	}
 	return c.JSON(200, map[string]string{"result": "슬랙 발송 완료", "orders": fmt.Sprintf("%d건", len(orderKeys))})
 }
@@ -1679,13 +1790,9 @@ func startOrderPolling(e *echo.Echo) {
 			<-ticker.C
 		}
 		fmt.Printf("[order polling] 폴링 시작: %s\n", time.Now().In(loc).Format("2006-01-02 15:04:05"))
-		if cfg.SlackWebhookURL == "" {
-			fmt.Println("[order polling] SlackWebhookURL 미설정, 스킵")
-			continue
-		}
 
 		now := time.Now().In(loc)
-		todayStr := now.Format("20060102")
+		todayStr := now.Format("2006-01-02")
 
 		rows, err := database.DB.Query(`SELECT id, vendor_id, access_key, secret_key FROM users`)
 		if err != nil {
@@ -1779,21 +1886,38 @@ func startOrderPolling(e *echo.Echo) {
 				u.id, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"))
 			todaySumRow.Scan(&todayTotalCount, &todayTotalAmt)
 
+			// 5. DB에서 사용자 슬랙 웹훅 목록 조회
+			whRows, _ := database.DB.Query(
+				`SELECT webhook_url FROM slack_webhooks WHERE user_id=? AND enabled=1`, u.id)
+			var userWebhooks []string
+			for whRows.Next() {
+				var wurl string
+				whRows.Scan(&wurl)
+				userWebhooks = append(userWebhooks, wurl)
+			}
+			whRows.Close()
+			if len(userWebhooks) == 0 {
+				fmt.Printf("[order polling] 등록된 웹훅 없음 user=%d, 스킵\n", u.id)
+				continue
+			}
+
 			// [임시] 신규 주문 없어도 슬랙 발송 (폴링 동작 확인용 - 나중에 주석 처리)
 			if len(newOrders) == 0 {
 				msg := fmt.Sprintf("[로켓그로스] 신규 주문 없음\n─────────────────\n신규주문이 없습니다.\n─────────────────\n오늘 판매현황 : 총 %d건 / 총 %s원",
 					todayTotalCount,
 					formatComma(int64(todayTotalAmt)),
 				)
-				if err := sendSlackNotification(cfg.SlackWebhookURL, msg); err != nil {
-					e.Logger.Errorf("[order polling] 슬랙 알림 실패 user=%d: %v", u.id, err)
-				} else {
-					e.Logger.Infof("[order polling] 슬랙 알림 전송 완료 (신규 없음) user=%d", u.id)
+				for _, wurl := range userWebhooks {
+					if err := sendSlackNotification(wurl, msg); err != nil {
+						e.Logger.Errorf("[order polling] 슬랙 알림 실패 user=%d: %v", u.id, err)
+					} else {
+						e.Logger.Infof("[order polling] 슬랙 알림 전송 완료 (신규 없음) user=%d", u.id)
+					}
 				}
 				continue
 			}
 
-			// 5. 슬랙 메시지 작성 (신규 주문 있는 경우)
+			// 6. 슬랙 메시지 작성 (신규 주문 있는 경우)
 			var totalAmt float64
 			lines := []string{}
 			for _, o := range newOrders {
@@ -1819,10 +1943,12 @@ func startOrderPolling(e *echo.Echo) {
 				formatComma(int64(todayTotalAmt)),
 			)
 
-			if err := sendSlackNotification(cfg.SlackWebhookURL, msg); err != nil {
-				e.Logger.Errorf("[order polling] 슬랙 알림 실패 user=%d: %v", u.id, err)
-			} else {
-				e.Logger.Infof("[order polling] 슬랙 알림 전송 완료 user=%d 신규주문=%d건", u.id, len(newOrders))
+			for _, wurl := range userWebhooks {
+				if err := sendSlackNotification(wurl, msg); err != nil {
+					e.Logger.Errorf("[order polling] 슬랙 알림 실패 user=%d: %v", u.id, err)
+				} else {
+					e.Logger.Infof("[order polling] 슬랙 알림 전송 완료 user=%d 신규주문=%d건", u.id, len(newOrders))
+				}
 			}
 		}
 	}

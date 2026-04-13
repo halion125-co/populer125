@@ -667,7 +667,7 @@ const OrdersPage = () => {
                 radius={[3, 3, 0, 0]}
                 maxBarSize={48}
                 shape={(props: BarShapeProps) => {
-                  const { x, y, width, height, value } = props as BarShapeProps & { x: number; y: number; width: number; height: number; value: number };
+                  const { x, y, width, height } = props as BarShapeProps & { x: number; y: number; width: number; height: number };
                   const fill = '#3b82f6';
                   const r = 3;
                   return (

@@ -369,12 +369,12 @@ func getInventoryFromDB(c echo.Context) error {
 func getOrdersFromDB(c echo.Context) error {
 	user := c.Get("user").(*middleware.UserContext)
 
-	// 프론트에서 KST 날짜(yyyy-MM-dd)로 전달되므로 UTC로 변환하여 DB 조회
+	// 프론트에서 KST 날짜(yyyy-MM-dd)로 전달됨 — DB도 KST 형식으로 저장되므로 그대로 사용
 	kst := time.FixedZone("KST", 9*60*60)
 	var fromUTC, toUTC string
 	if from := c.QueryParam("createdAtFrom"); from != "" {
 		if t, err := time.ParseInLocation("2006-01-02", from, kst); err == nil {
-			fromUTC = t.UTC().Format(time.RFC3339)
+			fromUTC = t.Format("2006-01-02T15:04:05+09:00")
 		} else {
 			fromUTC = from
 		}
@@ -382,9 +382,9 @@ func getOrdersFromDB(c echo.Context) error {
 	if to := c.QueryParam("createdAtTo"); to != "" {
 		// to날짜의 KST 23:59:59까지 포함
 		if t, err := time.ParseInLocation("2006-01-02T15:04:05", to, kst); err == nil {
-			toUTC = t.UTC().Format(time.RFC3339)
+			toUTC = t.Format("2006-01-02T15:04:05+09:00")
 		} else if t, err := time.ParseInLocation("2006-01-02", to, kst); err == nil {
-			toUTC = t.Add(24*time.Hour - time.Second).UTC().Format(time.RFC3339)
+			toUTC = t.Add(24*time.Hour - time.Second).Format("2006-01-02T15:04:05+09:00")
 		} else {
 			toUTC = to
 		}
@@ -1010,9 +1010,10 @@ func syncOrders(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "응답 파싱 실패"})
 	}
 
+	kst, _ := time.LoadLocation("Asia/Seoul")
 	orderCount := 0
 	for _, o := range ordersResp.Data {
-		paidAtStr := time.Unix(o.PaidAt/1000, 0).UTC().Format("2006-01-02T15:04:05Z")
+		paidAtStr := time.Unix(o.PaidAt/1000, 0).In(kst).Format("2006-01-02T15:04:05+09:00")
 
 		_, err := database.DB.Exec(`
 			INSERT INTO orders (user_id, order_id, paid_at, synced_at)
@@ -1703,7 +1704,7 @@ func sendTodaySlack(c echo.Context) error {
 	userID := c.Get("user").(*middleware.UserContext).UserID
 	loc, _ := time.LoadLocation("Asia/Seoul")
 	now := time.Now().In(loc)
-	kstMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC()
+	kstMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 	kstTomorrow := kstMidnight.Add(24 * time.Hour)
 
 	type orderItem struct {
@@ -1723,7 +1724,7 @@ func sendTodaySlack(c echo.Context) error {
 		LEFT JOIN order_items oi ON o.order_id = oi.order_id AND oi.user_id = o.user_id
 		WHERE o.user_id = ? AND o.paid_at >= ? AND o.paid_at < ?
 		ORDER BY o.paid_at ASC`,
-		userID, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"))
+		userID, kstMidnight.Format("2006-01-02T15:04:05+09:00"), kstTomorrow.Format("2006-01-02T15:04:05+09:00"))
 	if err != nil {
 		return c.JSON(500, map[string]string{"error": err.Error()})
 	}
@@ -1756,8 +1757,8 @@ func sendTodaySlack(c echo.Context) error {
 	lines := []string{}
 	for _, oid := range orderKeys {
 		o := orderMap[oid]
-		paidKST, _ := time.Parse("2006-01-02T15:04:05Z", o.PaidAt)
-		paidStr := paidKST.In(loc).Format("01/02 15:04")
+		paidKST, _ := time.Parse("2006-01-02T15:04:05+09:00", o.PaidAt)
+		paidStr := paidKST.Format("01/02 15:04")
 		for _, item := range o.Items {
 			lines = append(lines, fmt.Sprintf("• [%s] %s / %d개 / %s원",
 				paidStr, item.ProductName, item.SalesQuantity, formatComma(int64(item.SalesPrice))))
@@ -1852,11 +1853,11 @@ func startOrderPolling(e *echo.Echo) {
 			fmt.Printf("[order polling] 폴링 실행 user=%d interval=%dm\n", u.id, u.pollingIntervalMin)
 
 			// 1. DB에서 오늘 날짜 기준 기존 order_id 목록 조회
-			kstMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC()
+			kstMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 			kstTomorrow := kstMidnight.Add(24 * time.Hour)
 			existRows, err := database.DB.Query(
 				`SELECT order_id FROM orders WHERE user_id = ? AND paid_at >= ? AND paid_at < ?`,
-				u.id, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"),
+				u.id, kstMidnight.Format("2006-01-02T15:04:05+09:00"), kstTomorrow.Format("2006-01-02T15:04:05+09:00"),
 			)
 			if err != nil {
 				e.Logger.Errorf("[order polling] 기존 주문 조회 실패 user=%d: %v", u.id, err)
@@ -1894,7 +1895,7 @@ func startOrderPolling(e *echo.Echo) {
 				if err := json.Unmarshal(raw, &o); err != nil {
 					continue
 				}
-				paidAtStr := time.Unix(o.PaidAt/1000, 0).UTC().Format("2006-01-02T15:04:05Z")
+				paidAtStr := time.Unix(o.PaidAt/1000, 0).In(loc).Format("2006-01-02T15:04:05+09:00")
 				// DB upsert (항상 최신 상태 유지)
 				database.DB.Exec(`
 					INSERT INTO orders (user_id, order_id, paid_at, synced_at)
@@ -1924,7 +1925,7 @@ func startOrderPolling(e *echo.Echo) {
 				FROM orders o
 				LEFT JOIN order_items oi ON o.order_id = oi.order_id AND oi.user_id = o.user_id
 				WHERE o.user_id = ? AND o.paid_at >= ? AND o.paid_at < ?`,
-				u.id, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"))
+				u.id, kstMidnight.Format("2006-01-02T15:04:05+09:00"), kstTomorrow.Format("2006-01-02T15:04:05+09:00"))
 			todaySumRow.Scan(&todayTotalCount, &todayTotalAmt)
 
 			// 5. DB에서 사용자 슬랙 웹훅 목록 조회

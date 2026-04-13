@@ -159,19 +159,18 @@ func (c *Client) requestWithRetry(method, path, query string) ([]byte, error) {
 
 // GetOrders fetches all orders by splitting date range into 30-day chunks (API limit)
 func (c *Client) GetOrders(paidDateFrom, paidDateTo string) ([]byte, error) {
-	// KST 기준으로 날짜 파싱 (쿠팡 API는 KST 기준 날짜 처리)
-	kst, _ := time.LoadLocation("Asia/Seoul")
-	fromDate, err := time.ParseInLocation("2006-01-02", paidDateFrom, kst)
+	// 날짜 파싱 (날짜 문자열만 사용, timezone 불필요)
+	fromDate, err := time.Parse("2006-01-02", paidDateFrom)
 	if err != nil {
 		return nil, fmt.Errorf("invalid paidDateFrom format: %w", err)
 	}
-	toDate, err := time.ParseInLocation("2006-01-02", paidDateTo, kst)
+	// 쿠팡 API의 paidDateTo는 inclusive(당일 포함)이므로 +1일 불필요
+	toDate, err := time.Parse("2006-01-02", paidDateTo)
 	if err != nil {
 		return nil, fmt.Errorf("invalid paidDateTo format: %w", err)
 	}
-
-	// Coupang API treats "to" date as exclusive, so add 1 day to include it
-	toDate = toDate.AddDate(0, 0, 1)
+	// 청크 루프 종료 조건을 위해 toDate에 1일 추가 (API 요청에는 원본 날짜 사용)
+	toDateExclusive := toDate.AddDate(0, 0, 1)
 
 	var allOrders []json.RawMessage
 	path := fmt.Sprintf("/v2/providers/rg_open_api/apis/api/v1/vendors/%s/rg/orders", c.VendorID)
@@ -179,7 +178,7 @@ func (c *Client) GetOrders(paidDateFrom, paidDateTo string) ([]byte, error) {
 	// Split into 30-day chunks (API limit: 1 month)
 	currentFrom := fromDate
 	chunkIndex := 0
-	for currentFrom.Before(toDate) {
+	for currentFrom.Before(toDateExclusive) {
 		// 청크 간 딜레이 (첫 번째 청크는 제외)
 		if chunkIndex > 0 {
 			time.Sleep(1 * time.Second)
@@ -188,13 +187,19 @@ func (c *Client) GetOrders(paidDateFrom, paidDateTo string) ([]byte, error) {
 
 		// Calculate chunk end (30 days from current start, but not exceeding toDate)
 		currentTo := currentFrom.AddDate(0, 0, 30)
-		if currentTo.After(toDate) {
-			currentTo = toDate
+		if currentTo.After(toDateExclusive) {
+			currentTo = toDateExclusive
+		}
+
+		// API 요청은 원본 toDate 기준 (inclusive) — 마지막 청크는 toDate 그대로 사용
+		apiTo := currentTo
+		if apiTo.Equal(toDateExclusive) {
+			apiTo = toDate
 		}
 
 		// Convert to yyyymmdd format
 		fromStr := strings.ReplaceAll(currentFrom.Format("2006-01-02"), "-", "")
-		toStr := strings.ReplaceAll(currentTo.Format("2006-01-02"), "-", "")
+		toStr := strings.ReplaceAll(apiTo.Format("2006-01-02"), "-", "")
 
 		// Fetch orders for this chunk with pagination
 		baseQuery := fmt.Sprintf("paidDateFrom=%s&paidDateTo=%s", fromStr, toStr)

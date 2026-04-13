@@ -1874,11 +1874,10 @@ func startOrderPolling(e *echo.Echo) {
 			}
 			existRows.Close()
 
-			// 2. 쿠팡 API 호출 — ±1일 여유로 UTC/KST 경계 주문 누락 방지
+			// 2. 쿠팡 API 호출 — 오늘(KST) 하루만 조회
 			client := coupang.NewClient(u.vendorID, u.accessKey, u.secretKey)
-			yesterdayStr := now.AddDate(0, 0, -1).Format("2006-01-02")
-			tomorrowStr := now.AddDate(0, 0, 1).Format("2006-01-02")
-			body, err := client.GetOrders(yesterdayStr, tomorrowStr)
+			todayStr := now.Format("2006-01-02")
+			body, err := client.GetOrders(todayStr, todayStr)
 			if err != nil {
 				fmt.Printf("[order polling] API 호출 실패 user=%d: %v\n", u.id, err)
 				continue

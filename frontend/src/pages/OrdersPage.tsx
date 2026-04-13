@@ -206,6 +206,18 @@ const OrdersPage = () => {
     setSearchRange({ from, to });
   };
 
+  const handleFromChange = (value: string) => {
+    // from이 to보다 늦으면 to를 from으로 당김
+    const newTo = value > dateInput.to ? value : dateInput.to;
+    setDateInput({ from: value, to: newTo });
+  };
+
+  const handleToChange = (value: string) => {
+    // to가 from보다 빠르면 from을 to로 당김
+    const newFrom = value < dateInput.from ? value : dateInput.from;
+    setDateInput({ from: newFrom, to: value });
+  };
+
   // Client-side filtering
   const filteredOrders = useMemo(() => {
     return orders.filter((o: Order) => {
@@ -262,8 +274,7 @@ const OrdersPage = () => {
 
       if (isSingleDay) {
         // 하루 조회: 30분 단위 (00:00 ~ 현재 슬롯)
-        // key: "0" ~ "47" (slot index)
-        const slots: number[] = Array(48).fill(0);
+        const slots: { sales: number; count: number }[] = Array.from({ length: 48 }, () => ({ sales: 0, count: 0 }));
         filteredOrders.forEach((order) => {
           if (!order.paidAt) return;
           const kst = toKSTDate(order.paidAt);
@@ -271,26 +282,29 @@ const OrdersPage = () => {
           const sales = (order.orderItems || []).reduce(
             (s, item) => s + (item.salesPrice || 0) * (item.salesQuantity || 0), 0
           );
-          slots[slot] += sales;
+          const qty = (order.orderItems || []).reduce((s, item) => s + (item.salesQuantity || 0), 0);
+          slots[slot].sales += sales;
+          slots[slot].count += qty;
         });
 
-        // 조회 날짜가 오늘이면 현재 슬롯까지, 과거면 47까지
         const isToday = searchRange.from?.slice(0, 10) === todayKST;
         const maxSlot = isToday ? nowSlot : 47;
         return Array.from({ length: maxSlot + 1 }, (_, i) => {
           const h = Math.floor(i / 2);
-          // 정각 슬롯(i가 짝수)만 시간 표시, 30분 슬롯은 빈 문자열
+          const dateLabel = searchRange.from?.slice(0, 10) ?? '';
+          const timeLabel = `${dateLabel} ${String(h).padStart(2, '0')}:${i % 2 === 0 ? '00' : '30'}`;
           return {
             label: i % 2 === 0 ? `${String(h).padStart(2, '0')}시` : '',
             sub: '',
-            sales: slots[i],
+            sales: slots[i].sales,
+            count: slots[i].count,
+            tooltipLabel: timeLabel,
           };
         });
       }
 
       // 2~3일 조회: 날짜별 24시간 슬롯
-      // key: "2026-04-05-14" 형식
-      const slots: Record<string, number> = {};
+      const slots: Record<string, { sales: number; count: number }> = {};
       const datelist: string[] = [];
       if (searchRange.from && searchRange.to) {
         const cur = new Date(searchRange.from);
@@ -299,13 +313,12 @@ const OrdersPage = () => {
           const dateKey = cur.toISOString().slice(0, 10);
           datelist.push(dateKey);
           for (let h = 0; h < 24; h++) {
-            slots[`${dateKey}-${h}`] = 0;
+            slots[`${dateKey}-${h}`] = { sales: 0, count: 0 };
           }
           cur.setDate(cur.getDate() + 1);
         }
       }
 
-      // 각 주문을 해당 날짜-시간 슬롯에 집계
       let lastDataKey = '';
       filteredOrders.forEach((order) => {
         if (!order.paidAt) return;
@@ -317,16 +330,17 @@ const OrdersPage = () => {
           const sales = (order.orderItems || []).reduce(
             (s, item) => s + (item.salesPrice || 0) * (item.salesQuantity || 0), 0
           );
-          slots[key] += sales;
+          const qty = (order.orderItems || []).reduce((s, item) => s + (item.salesQuantity || 0), 0);
+          slots[key].sales += sales;
+          slots[key].count += qty;
           if (!lastDataKey || key > lastDataKey) lastDataKey = key;
         }
       });
 
-      // 마지막 날: 오늘이면 현재 KST 시간까지, 과거면 23시까지
       const lastDate = datelist[datelist.length - 1];
       const lastHour = lastDate === todayKST ? nowKSTHour : 23;
 
-      const result: { label: string; sub: string; sales: number }[] = [];
+      const result: { label: string; sub: string; sales: number; count: number; tooltipLabel: string }[] = [];
       datelist.forEach((dateKey, di) => {
         const d = new Date(dateKey);
         const dateLabel = `${d.getUTCMonth() + 1}/${String(d.getUTCDate()).padStart(2, '0')}`;
@@ -335,19 +349,21 @@ const OrdersPage = () => {
           result.push({
             label: `${String(h).padStart(2, '0')}시`,
             sub: h === 0 ? dateLabel : '',
-            sales: slots[`${dateKey}-${h}`] ?? 0,
+            sales: slots[`${dateKey}-${h}`]?.sales ?? 0,
+            count: slots[`${dateKey}-${h}`]?.count ?? 0,
+            tooltipLabel: `${dateLabel} ${String(h).padStart(2, '0')}:00`,
           });
         }
       });
       return result;
     } else {
       // 일 단위: from~to 날짜 슬롯 생성
-      const slots: Record<string, number> = {};
+      const slots: Record<string, { sales: number; count: number }> = {};
       if (searchRange.from && searchRange.to) {
         const cur = new Date(searchRange.from);
         const end = new Date(searchRange.to);
         while (cur <= end) {
-          slots[cur.toISOString().slice(0, 10)] = 0;
+          slots[cur.toISOString().slice(0, 10)] = { sales: 0, count: 0 };
           cur.setDate(cur.getDate() + 1);
         }
       }
@@ -359,15 +375,17 @@ const OrdersPage = () => {
           const sales = (order.orderItems || []).reduce(
             (s, item) => s + (item.salesPrice || 0) * (item.salesQuantity || 0), 0
           );
-          slots[key] += sales;
+          const qty = (order.orderItems || []).reduce((s, item) => s + (item.salesQuantity || 0), 0);
+          slots[key].sales += sales;
+          slots[key].count += qty;
         }
       });
-      return Object.entries(slots).map(([date, sales]) => {
+      return Object.entries(slots).map(([date, { sales, count }]) => {
         const d = new Date(date);
         const days = ['일', '월', '화', '수', '목', '금', '토'];
         const line1 = `${d.getUTCMonth() + 1}/${String(d.getUTCDate()).padStart(2, '0')}`;
         const line2 = `(${days[d.getUTCDay()]})`;
-        return { label: line1, sub: line2, sales };
+        return { label: line1, sub: line2, sales, count, tooltipLabel: `${line1}${line2}` };
       });
     }
   }, [filteredOrders, effectiveChartView, searchRange]);
@@ -497,14 +515,16 @@ const OrdersPage = () => {
               <input
                 type="date"
                 value={dateInput.from}
-                onChange={(e) => setDateInput({ ...dateInput, from: e.target.value })}
+                max={dateInput.to}
+                onChange={(e) => handleFromChange(e.target.value)}
                 className="flex-1 px-2 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <span className="text-gray-400 text-sm">~</span>
               <input
                 type="date"
                 value={dateInput.to}
-                onChange={(e) => setDateInput({ ...dateInput, to: e.target.value })}
+                min={dateInput.from}
+                onChange={(e) => handleToChange(e.target.value)}
                 className="flex-1 px-2 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -524,14 +544,16 @@ const OrdersPage = () => {
               <input
                 type="date"
                 value={dateInput.from}
-                onChange={(e) => setDateInput({ ...dateInput, from: e.target.value })}
+                max={dateInput.to}
+                onChange={(e) => handleFromChange(e.target.value)}
                 className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <span className="text-gray-400">~</span>
               <input
                 type="date"
                 value={dateInput.to}
-                onChange={(e) => setDateInput({ ...dateInput, to: e.target.value })}
+                min={dateInput.from}
+                onChange={(e) => handleToChange(e.target.value)}
                 className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <div className="flex gap-2">
@@ -627,7 +649,18 @@ const OrdersPage = () => {
                 width={36}
               />
               <Tooltip
-                formatter={(value: number | undefined) => [`${(value ?? 0).toLocaleString('ko-KR')}원`, '매출']}
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null;
+                  const d = payload[0].payload;
+                  if (!d.sales && !d.count) return null;
+                  return (
+                    <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 text-sm">
+                      <p className="font-semibold text-gray-700 mb-1">{d.tooltipLabel}</p>
+                      <p className="text-gray-600">판매수량: <span className="font-medium text-blue-600">{(d.count ?? 0).toLocaleString('ko-KR')}개</span></p>
+                      <p className="text-gray-600">판매금액: <span className="font-medium text-blue-600">{(d.sales ?? 0).toLocaleString('ko-KR')}원</span></p>
+                    </div>
+                  );
+                }}
               />
               <Bar
                 dataKey="sales"
@@ -635,7 +668,7 @@ const OrdersPage = () => {
                 maxBarSize={48}
                 shape={(props: BarShapeProps) => {
                   const { x, y, width, height, value } = props as BarShapeProps & { x: number; y: number; width: number; height: number; value: number };
-                  const fill = value === chartYConfig.maxSales && value > 0 ? '#ef4444' : '#3b82f6';
+                  const fill = '#3b82f6';
                   const r = 3;
                   return (
                     <path

@@ -159,12 +159,13 @@ func (c *Client) requestWithRetry(method, path, query string) ([]byte, error) {
 
 // GetOrders fetches all orders by splitting date range into 30-day chunks (API limit)
 func (c *Client) GetOrders(paidDateFrom, paidDateTo string) ([]byte, error) {
-	// Parse date strings
-	fromDate, err := time.Parse("2006-01-02", paidDateFrom)
+	// KST 기준으로 날짜 파싱 (쿠팡 API는 KST 기준 날짜 처리)
+	kst, _ := time.LoadLocation("Asia/Seoul")
+	fromDate, err := time.ParseInLocation("2006-01-02", paidDateFrom, kst)
 	if err != nil {
 		return nil, fmt.Errorf("invalid paidDateFrom format: %w", err)
 	}
-	toDate, err := time.Parse("2006-01-02", paidDateTo)
+	toDate, err := time.ParseInLocation("2006-01-02", paidDateTo, kst)
 	if err != nil {
 		return nil, fmt.Errorf("invalid paidDateTo format: %w", err)
 	}

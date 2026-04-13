@@ -369,12 +369,12 @@ func getInventoryFromDB(c echo.Context) error {
 func getOrdersFromDB(c echo.Context) error {
 	user := c.Get("user").(*middleware.UserContext)
 
-	// 프론트에서 KST 날짜(yyyy-MM-dd)로 전달됨 — DB도 KST 형식으로 저장되므로 그대로 사용
+	// 프론트에서 KST 날짜(yyyy-MM-dd)로 전달되므로 UTC로 변환하여 DB 조회
 	kst := time.FixedZone("KST", 9*60*60)
 	var fromUTC, toUTC string
 	if from := c.QueryParam("createdAtFrom"); from != "" {
 		if t, err := time.ParseInLocation("2006-01-02", from, kst); err == nil {
-			fromUTC = t.Format("2006-01-02T15:04:05+09:00")
+			fromUTC = t.UTC().Format(time.RFC3339)
 		} else {
 			fromUTC = from
 		}
@@ -382,9 +382,9 @@ func getOrdersFromDB(c echo.Context) error {
 	if to := c.QueryParam("createdAtTo"); to != "" {
 		// to날짜의 KST 23:59:59까지 포함
 		if t, err := time.ParseInLocation("2006-01-02T15:04:05", to, kst); err == nil {
-			toUTC = t.Format("2006-01-02T15:04:05+09:00")
+			toUTC = t.UTC().Format(time.RFC3339)
 		} else if t, err := time.ParseInLocation("2006-01-02", to, kst); err == nil {
-			toUTC = t.Add(24*time.Hour - time.Second).Format("2006-01-02T15:04:05+09:00")
+			toUTC = t.Add(24*time.Hour - time.Second).UTC().Format(time.RFC3339)
 		} else {
 			toUTC = to
 		}
@@ -958,28 +958,33 @@ func syncOrders(c echo.Context) error {
 		})
 	}
 
-	// force=true: 겹치는 기간의 기존 데이터 삭제
+	// API 호출 시 ±1일 여유를 두어 UTC/KST 경계 주문 누락 방지
+	apiFrom := fromStr
+	apiTo := toStr
+	if t, err := time.Parse("2006-01-02", fromStr); err == nil {
+		apiFrom = t.AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	if t, err := time.Parse("2006-01-02", toStr); err == nil {
+		apiTo = t.AddDate(0, 0, 1).Format("2006-01-02")
+	}
+	syncFrom := fromStr
+	syncTo := toStr
+
+	// force=true: 삭제 범위를 apiFrom~apiTo(±1일)와 일치시켜 경계 데이터 누락 방지
 	if hasOverlap && force {
 		database.DB.Exec(
 			`DELETE FROM order_items WHERE user_id = ? AND order_id IN (
 				SELECT order_id FROM orders WHERE user_id = ? AND substr(paid_at,1,10) >= ? AND substr(paid_at,1,10) <= ?
 			)`,
-			user.UserID, user.UserID, overlapFrom, overlapTo,
+			user.UserID, user.UserID, apiFrom, apiTo,
 		)
 		database.DB.Exec(
 			`DELETE FROM orders WHERE user_id = ? AND substr(paid_at,1,10) >= ? AND substr(paid_at,1,10) <= ?`,
-			user.UserID, overlapFrom, overlapTo,
+			user.UserID, apiFrom, apiTo,
 		)
 	}
 
-	// 실제 동기화할 범위 결정
-	// force=true: 전체 요청 범위 동기화
-	// force=false + 겹침 없음: 전체 요청 범위 동기화
-	// (겹침 있고 force=false는 위에서 이미 반환됨)
-	syncFrom := fromStr
-	syncTo := toStr
-
-	data, err := client.GetOrders(syncFrom, syncTo)
+	data, err := client.GetOrders(apiFrom, apiTo)
 	if err != nil {
 		c.Logger().Errorf("syncOrders GetOrders failed: %v", err)
 		if strings.Contains(err.Error(), "429") {
@@ -1010,10 +1015,9 @@ func syncOrders(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "응답 파싱 실패"})
 	}
 
-	kst, _ := time.LoadLocation("Asia/Seoul")
 	orderCount := 0
 	for _, o := range ordersResp.Data {
-		paidAtStr := time.Unix(o.PaidAt/1000, 0).In(kst).Format("2006-01-02T15:04:05+09:00")
+		paidAtStr := time.Unix(o.PaidAt/1000, 0).UTC().Format("2006-01-02T15:04:05Z")
 
 		_, err := database.DB.Exec(`
 			INSERT INTO orders (user_id, order_id, paid_at, synced_at)
@@ -1704,7 +1708,7 @@ func sendTodaySlack(c echo.Context) error {
 	userID := c.Get("user").(*middleware.UserContext).UserID
 	loc, _ := time.LoadLocation("Asia/Seoul")
 	now := time.Now().In(loc)
-	kstMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	kstMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC()
 	kstTomorrow := kstMidnight.Add(24 * time.Hour)
 
 	type orderItem struct {
@@ -1724,7 +1728,7 @@ func sendTodaySlack(c echo.Context) error {
 		LEFT JOIN order_items oi ON o.order_id = oi.order_id AND oi.user_id = o.user_id
 		WHERE o.user_id = ? AND o.paid_at >= ? AND o.paid_at < ?
 		ORDER BY o.paid_at ASC`,
-		userID, kstMidnight.Format("2006-01-02T15:04:05+09:00"), kstTomorrow.Format("2006-01-02T15:04:05+09:00"))
+		userID, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"))
 	if err != nil {
 		return c.JSON(500, map[string]string{"error": err.Error()})
 	}
@@ -1757,8 +1761,8 @@ func sendTodaySlack(c echo.Context) error {
 	lines := []string{}
 	for _, oid := range orderKeys {
 		o := orderMap[oid]
-		paidKST, _ := time.Parse("2006-01-02T15:04:05+09:00", o.PaidAt)
-		paidStr := paidKST.Format("01/02 15:04")
+		paidUTC, _ := time.Parse("2006-01-02T15:04:05Z", o.PaidAt)
+		paidStr := paidUTC.In(loc).Format("01/02 15:04")
 		for _, item := range o.Items {
 			lines = append(lines, fmt.Sprintf("• [%s] %s / %d개 / %s원",
 				paidStr, item.ProductName, item.SalesQuantity, formatComma(int64(item.SalesPrice))))
@@ -1826,7 +1830,6 @@ func startOrderPolling(e *echo.Echo) {
 		fmt.Printf("[order polling] 틱: %s\n", time.Now().In(loc).Format("2006-01-02 15:04:05"))
 
 		now := time.Now().In(loc)
-		todayStr := now.Format("2006-01-02")
 
 		rows, err := database.DB.Query(`SELECT id, vendor_id, access_key, secret_key, COALESCE(polling_interval_min, 10) FROM users`)
 		if err != nil {
@@ -1853,11 +1856,11 @@ func startOrderPolling(e *echo.Echo) {
 			fmt.Printf("[order polling] 폴링 실행 user=%d interval=%dm\n", u.id, u.pollingIntervalMin)
 
 			// 1. DB에서 오늘 날짜 기준 기존 order_id 목록 조회
-			kstMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+			kstMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC()
 			kstTomorrow := kstMidnight.Add(24 * time.Hour)
 			existRows, err := database.DB.Query(
 				`SELECT order_id FROM orders WHERE user_id = ? AND paid_at >= ? AND paid_at < ?`,
-				u.id, kstMidnight.Format("2006-01-02T15:04:05+09:00"), kstTomorrow.Format("2006-01-02T15:04:05+09:00"),
+				u.id, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"),
 			)
 			if err != nil {
 				e.Logger.Errorf("[order polling] 기존 주문 조회 실패 user=%d: %v", u.id, err)
@@ -1871,9 +1874,11 @@ func startOrderPolling(e *echo.Echo) {
 			}
 			existRows.Close()
 
-			// 2. 쿠팡 API 호출 (동기화 버튼과 동일한 GetOrders 사용)
+			// 2. 쿠팡 API 호출 — ±1일 여유로 UTC/KST 경계 주문 누락 방지
 			client := coupang.NewClient(u.vendorID, u.accessKey, u.secretKey)
-			body, err := client.GetOrders(todayStr, todayStr)
+			yesterdayStr := now.AddDate(0, 0, -1).Format("2006-01-02")
+			tomorrowStr := now.AddDate(0, 0, 1).Format("2006-01-02")
+			body, err := client.GetOrders(yesterdayStr, tomorrowStr)
 			if err != nil {
 				fmt.Printf("[order polling] API 호출 실패 user=%d: %v\n", u.id, err)
 				continue
@@ -1895,7 +1900,7 @@ func startOrderPolling(e *echo.Echo) {
 				if err := json.Unmarshal(raw, &o); err != nil {
 					continue
 				}
-				paidAtStr := time.Unix(o.PaidAt/1000, 0).In(loc).Format("2006-01-02T15:04:05+09:00")
+				paidAtStr := time.Unix(o.PaidAt/1000, 0).UTC().Format("2006-01-02T15:04:05Z")
 				// DB upsert (항상 최신 상태 유지)
 				database.DB.Exec(`
 					INSERT INTO orders (user_id, order_id, paid_at, synced_at)
@@ -1925,7 +1930,7 @@ func startOrderPolling(e *echo.Echo) {
 				FROM orders o
 				LEFT JOIN order_items oi ON o.order_id = oi.order_id AND oi.user_id = o.user_id
 				WHERE o.user_id = ? AND o.paid_at >= ? AND o.paid_at < ?`,
-				u.id, kstMidnight.Format("2006-01-02T15:04:05+09:00"), kstTomorrow.Format("2006-01-02T15:04:05+09:00"))
+				u.id, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"))
 			todaySumRow.Scan(&todayTotalCount, &todayTotalAmt)
 
 			// 5. DB에서 사용자 슬랙 웹훅 목록 조회

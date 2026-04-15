@@ -2,7 +2,9 @@
 export const formatKST = (t: string, fallback = '-'): string => {
   if (!t) return fallback;
   try {
-    const kst = new Date(new Date(t).getTime() + 9 * 60 * 60 * 1000);
+    // SQLite CURRENT_TIMESTAMP 형식 ("2026-04-15 02:37:00") → ISO 8601 UTC로 정규화
+    const normalized = t.includes('T') ? t : t.replace(' ', 'T') + 'Z';
+    const kst = new Date(new Date(normalized).getTime() + 9 * 60 * 60 * 1000);
     return kst.toISOString().slice(0, 16).replace('T', ' ');
   } catch {
     return fallback;

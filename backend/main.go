@@ -1343,7 +1343,7 @@ func getBatchLogs(c echo.Context) error {
 	user := c.Get("user").(*middleware.UserContext)
 	jobType := c.QueryParam("jobType")
 
-	query := `SELECT id, job_type, triggered_by, status, message, record_count, started_at, COALESCE(finished_at,'')
+	query := `SELECT id, job_type, triggered_by, status, message, record_count, started_at, COALESCE(finished_at,''), COALESCE(from_date,''), COALESCE(to_date,'')
 		FROM batch_logs WHERE user_id = ?`
 	args := []interface{}{user.UserID}
 	if jobType != "" {
@@ -1367,11 +1367,13 @@ func getBatchLogs(c echo.Context) error {
 		RecordCount int    `json:"recordCount"`
 		StartedAt   string `json:"startedAt"`
 		FinishedAt  string `json:"finishedAt"`
+		FromDate    string `json:"fromDate"`
+		ToDate      string `json:"toDate"`
 	}
 	var logs []BatchLog
 	for rows.Next() {
 		var l BatchLog
-		rows.Scan(&l.ID, &l.JobType, &l.TriggeredBy, &l.Status, &l.Message, &l.RecordCount, &l.StartedAt, &l.FinishedAt)
+		rows.Scan(&l.ID, &l.JobType, &l.TriggeredBy, &l.Status, &l.Message, &l.RecordCount, &l.StartedAt, &l.FinishedAt, &l.FromDate, &l.ToDate)
 		logs = append(logs, l)
 	}
 	if logs == nil {
@@ -1855,12 +1857,14 @@ func startOrderPolling(e *echo.Echo) {
 			lastRun[u.id] = time.Now()
 			fmt.Printf("[order polling] 폴링 실행 user=%d interval=%dm\n", u.id, u.pollingIntervalMin)
 
-			// 1. DB에서 오늘 날짜 기준 기존 order_id 목록 조회
+			// 1. DB에서 ±1일 범위 기존 order_id 목록 조회 (API 호출 범위와 동일하게 맞춤)
 			kstMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC()
 			kstTomorrow := kstMidnight.Add(24 * time.Hour)
+			apiRangeFrom := kstMidnight.Add(-24 * time.Hour)
+			apiRangeTo := kstTomorrow.Add(24 * time.Hour)
 			existRows, err := database.DB.Query(
 				`SELECT order_id FROM orders WHERE user_id = ? AND paid_at >= ? AND paid_at < ?`,
-				u.id, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"),
+				u.id, apiRangeFrom.Format("2006-01-02T15:04:05Z"), apiRangeTo.Format("2006-01-02T15:04:05Z"),
 			)
 			if err != nil {
 				e.Logger.Errorf("[order polling] 기존 주문 조회 실패 user=%d: %v", u.id, err)
@@ -1874,10 +1878,11 @@ func startOrderPolling(e *echo.Echo) {
 			}
 			existRows.Close()
 
-			// 2. 쿠팡 API 호출 — 오늘(KST) 하루만 조회
+			// 2. 쿠팡 API 호출 — KST 오늘 ±1일 (UTC 경계 주문 누락 방지)
 			client := coupang.NewClient(u.vendorID, u.accessKey, u.secretKey)
-			todayStr := now.Format("2006-01-02")
-			body, err := client.GetOrders(todayStr, todayStr)
+			yesterdayStr := now.AddDate(0, 0, -1).Format("2006-01-02")
+			tomorrowStr := now.AddDate(0, 0, 1).Format("2006-01-02")
+			body, err := client.GetOrders(yesterdayStr, tomorrowStr)
 			if err != nil {
 				fmt.Printf("[order polling] API 호출 실패 user=%d: %v\n", u.id, err)
 				continue
@@ -1921,16 +1926,22 @@ func startOrderPolling(e *echo.Echo) {
 				}
 			}
 
+			// 3-1. 폴링 실행 이력 저장
+			database.DB.Exec(`
+				INSERT INTO batch_logs (user_id, job_type, triggered_by, status, message, record_count, from_date, to_date, started_at, finished_at)
+				VALUES (?, 'polling', 'scheduler', 'success', '', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+				u.id, len(resp.Data), yesterdayStr, tomorrowStr)
+
 			// 4. 오늘 전체 판매현황 집계 (DB에서 조회)
-			var todayTotalCount int
+			var todayTotalQty int
 			var todayTotalAmt float64
 			todaySumRow := database.DB.QueryRow(`
-				SELECT COUNT(DISTINCT o.order_id), COALESCE(SUM(oi.sales_price * oi.sales_quantity), 0)
+				SELECT COALESCE(SUM(oi.sales_quantity), 0), COALESCE(SUM(oi.sales_price * oi.sales_quantity), 0)
 				FROM orders o
 				LEFT JOIN order_items oi ON o.order_id = oi.order_id AND oi.user_id = o.user_id
 				WHERE o.user_id = ? AND o.paid_at >= ? AND o.paid_at < ?`,
 				u.id, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"))
-			todaySumRow.Scan(&todayTotalCount, &todayTotalAmt)
+			todaySumRow.Scan(&todayTotalQty, &todayTotalAmt)
 
 			// 5. DB에서 사용자 슬랙 웹훅 목록 조회
 			whRows, _ := database.DB.Query(
@@ -1964,17 +1975,19 @@ func startOrderPolling(e *echo.Echo) {
 				continue
 			}
 
-			// 6. 슬랙 메시지 작성 (신규 주문 있는 경우)
-			var totalAmt float64
+			// 6. 슬랙 메시지 작성 (KST 오늘 신규 주문만)
+			todayDate := now.Format("2006-01-02") // KST 오늘 날짜
 			lines := []string{}
 			for _, o := range newOrders {
-				// paidAt(Unix ms) → KST 문자열
-				paidKST := time.Unix(o.PaidAt/1000, 0).In(loc).Format("01/02 15:04")
+				paidTime := time.Unix(o.PaidAt/1000, 0).In(loc)
+				// KST 기준 오늘 날짜인 경우만 포함
+				if paidTime.Format("2006-01-02") != todayDate {
+					continue
+				}
+				paidKST := paidTime.Format("01/02 15:04")
 				for _, oi := range o.OrderItems {
 					var price float64
 					fmt.Sscanf(oi.UnitSalesPrice, "%f", &price)
-					amt := price * float64(oi.SalesQuantity)
-					totalAmt += amt
 					lines = append(lines, fmt.Sprintf("• [%s] %s / %d개 / %s원",
 						paidKST,
 						oi.ProductName,
@@ -1983,19 +1996,31 @@ func startOrderPolling(e *echo.Echo) {
 				}
 			}
 
-			msg := fmt.Sprintf("[로켓그로스] 신규 주문 %d건 접수\n─────────────────\n%s\n─────────────────\n오늘 판매현황 : 총 %d건 / 총 %s원",
-				len(newOrders),
-				strings.Join(lines, "\n"),
-				todayTotalCount,
+			// KST 오늘 신규 주문 없으면 슬랙 발송 생략
+			if len(lines) == 0 {
+				continue
+			}
+
+			msg := fmt.Sprintf("[로켓그로스] 오늘 판매현황 : 총 %d개 / 총 %s원\n─────────────────\n%s",
+				todayTotalQty,
 				formatComma(int64(todayTotalAmt)),
+				strings.Join(lines, "\n"),
 			)
 
+			slackSuccess := false
 			for _, wurl := range userWebhooks {
 				if err := sendSlackNotification(wurl, msg); err != nil {
 					e.Logger.Errorf("[order polling] 슬랙 알림 실패 user=%d: %v", u.id, err)
 				} else {
 					e.Logger.Infof("[order polling] 슬랙 알림 전송 완료 user=%d 신규주문=%d건", u.id, len(newOrders))
+					slackSuccess = true
 				}
+			}
+			if slackSuccess {
+				database.DB.Exec(`
+					INSERT INTO batch_logs (user_id, job_type, triggered_by, status, message, record_count, from_date, to_date, started_at, finished_at)
+					VALUES (?, 'slack', 'scheduler', 'success', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+					u.id, fmt.Sprintf("신규 %d건", len(newOrders)), len(newOrders), yesterdayStr, tomorrowStr)
 			}
 		}
 	}

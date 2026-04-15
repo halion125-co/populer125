@@ -1,6 +1,5 @@
 FROM golang:1.24-alpine
 WORKDIR /app
 COPY . .
-RUN go mod tidy
 EXPOSE 8000
-CMD ["sh", "-c", "go mod tidy && go run main.go"]
+CMD ["go", "run", "-mod=vendor", "main.go"]

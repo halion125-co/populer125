@@ -261,6 +261,9 @@ func createTables() error {
 	if err != nil {
 		return err
 	}
+	if err := migrateBatchLogs(); err != nil {
+		return err
+	}
 
 	// 슬랙 웹훅 테이블
 	_, err = DB.Exec(`
@@ -275,6 +278,12 @@ func createTables() error {
 		);
 	`)
 	return err
+}
+
+func migrateBatchLogs() error {
+	DB.Exec("ALTER TABLE batch_logs ADD COLUMN from_date TEXT DEFAULT ''")
+	DB.Exec("ALTER TABLE batch_logs ADD COLUMN to_date TEXT DEFAULT ''")
+	return nil
 }
 
 func migrateInventory() error {

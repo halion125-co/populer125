@@ -13,6 +13,8 @@ interface BatchLog {
   recordCount: number;
   startedAt: string;
   finishedAt: string;
+  fromDate: string;
+  toDate: string;
 }
 
 const JOB_DEFS = [
@@ -144,7 +146,7 @@ export default function BatchPage() {
           <div className="px-5 py-4 border-b flex items-center justify-between">
             <h2 className="font-semibold text-gray-700">실행 로그</h2>
             <div className="flex gap-1.5">
-              {(['', 'products', 'orders', 'inventory'] as const).map((t) => (
+              {(['', 'products', 'orders', 'inventory', 'polling', 'slack'] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setSelectedJobType(t)}
@@ -154,7 +156,7 @@ export default function BatchPage() {
                       : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
                   }`}
                 >
-                  {t === '' ? '전체' : t === 'products' ? '상품' : t === 'orders' ? '주문' : '재고'}
+                  {t === '' ? '전체' : t === 'products' ? '상품' : t === 'orders' ? '주문' : t === 'inventory' ? '재고' : t === 'polling' ? '폴링' : '슬랙'}
                 </button>
               ))}
             </div>
@@ -168,6 +170,7 @@ export default function BatchPage() {
               <thead className="bg-gray-50 text-gray-500 text-xs">
                 <tr>
                   <th className="px-5 py-3 text-left">작업</th>
+                  <th className="px-5 py-3 text-left">기간</th>
                   <th className="px-5 py-3 text-left">시작</th>
                   <th className="px-5 py-3 text-left">완료</th>
                   <th className="px-5 py-3 text-left">구분</th>
@@ -180,7 +183,11 @@ export default function BatchPage() {
                 {logs.map((log) => (
                   <tr key={log.id} className="hover:bg-gray-50">
                     <td className="px-5 py-3 font-medium text-gray-700 whitespace-nowrap">
-                      {JOB_DEFS.find((j) => j.jobType === log.jobType)?.jobName || log.jobType}
+                      {JOB_DEFS.find((j) => j.jobType === log.jobType)?.jobName
+                        || (log.jobType === 'polling' ? '자동 폴링' : log.jobType === 'slack' ? '슬랙 발송' : log.jobType)}
+                    </td>
+                    <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
+                      {log.fromDate ? (log.fromDate !== log.toDate ? `${log.fromDate} ~ ${log.toDate}` : log.fromDate) : '-'}
                     </td>
                     <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">{formatKST(log.startedAt)}</td>
                     <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">{formatKST(log.finishedAt)}</td>

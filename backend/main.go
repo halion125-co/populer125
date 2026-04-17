@@ -932,6 +932,94 @@ func syncInventory(c echo.Context) error {
 		InventoryDetails InventoryDetails `json:"inventoryDetails"`
 	}
 
+	// 재고 API 응답에서 sellerProductId 수집 → product_items에 없으면 상품 단건 조회 후 등록
+	type RgSyncItemData struct {
+		VendorItemId int64 `json:"vendorItemId"`
+		ItemId       int64 `json:"itemId"`
+	}
+	type SyncDetailProductItem struct {
+		ItemName              string          `json:"itemName"`
+		SellerProductItemName string          `json:"sellerProductItemName"`
+		ExternalVendorSku     string          `json:"externalVendorSku"`
+		OriginalPrice         float64         `json:"originalPrice"`
+		SalePrice             float64         `json:"salePrice"`
+		StatusName            string          `json:"statusName"`
+		RocketGrowthItemData  *RgSyncItemData `json:"rocketGrowthItemData"`
+	}
+	type SyncDetailProduct struct {
+		SellerProductId   int64                  `json:"sellerProductId"`
+		SellerProductName string                 `json:"sellerProductName"`
+		Brand             string                 `json:"brand"`
+		StatusName        string                 `json:"statusName"`
+		Items             []SyncDetailProductItem `json:"items"`
+	}
+	type SyncDetailResp struct {
+		Code string            `json:"code"`
+		Data SyncDetailProduct `json:"data"`
+	}
+
+	// 재고 응답의 sellerProductId 중 product_items 미등록 항목 수집
+	type InvSellerProduct struct {
+		VendorItemId    int64 `json:"vendorItemId"`
+		SellerProductId int64 `json:"sellerProductId"`
+	}
+	missingSellerIds := map[int64]bool{}
+	for _, raw := range invRawItems {
+		var it InvSellerProduct
+		if err := json.Unmarshal(raw, &it); err != nil || it.SellerProductId == 0 {
+			continue
+		}
+		var exists int
+		database.DB.QueryRow(
+			`SELECT COUNT(*) FROM product_items WHERE user_id=? AND seller_product_id=?`,
+			user.UserID, it.SellerProductId,
+		).Scan(&exists)
+		if exists == 0 {
+			missingSellerIds[it.SellerProductId] = true
+		}
+	}
+	// 미등록 상품 단건 조회 → products + product_items 저장
+	for sellerProductId := range missingSellerIds {
+		detailBody, err := client.GetProductDetail(sellerProductId)
+		if err != nil {
+			continue
+		}
+		var dr SyncDetailResp
+		if err := json.Unmarshal(detailBody, &dr); err != nil || dr.Data.SellerProductId == 0 {
+			continue
+		}
+		p := dr.Data
+		database.DB.Exec(`
+			INSERT INTO products (user_id, seller_product_id, seller_product_name, brand, status_name, synced_at)
+			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(user_id, seller_product_id) DO UPDATE SET
+				seller_product_name = excluded.seller_product_name,
+				brand = excluded.brand,
+				status_name = excluded.status_name,
+				synced_at = CURRENT_TIMESTAMP`,
+			user.UserID, p.SellerProductId, p.SellerProductName, p.Brand, p.StatusName)
+		for _, it := range p.Items {
+			if it.RocketGrowthItemData == nil || it.RocketGrowthItemData.ItemId == 0 {
+				continue
+			}
+			database.DB.Exec(`
+				INSERT INTO product_items (user_id, seller_product_id, item_id, item_name,
+					seller_product_item_name, external_vendor_sku, original_price, sale_price,
+					status_name, vendor_item_id, synced_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+				ON CONFLICT(user_id, item_id) DO UPDATE SET
+					item_name = excluded.item_name,
+					seller_product_item_name = excluded.seller_product_item_name,
+					external_vendor_sku = excluded.external_vendor_sku,
+					status_name = excluded.status_name,
+					vendor_item_id = excluded.vendor_item_id,
+					synced_at = CURRENT_TIMESTAMP`,
+				user.UserID, p.SellerProductId, it.RocketGrowthItemData.ItemId, it.ItemName,
+				it.SellerProductItemName, it.ExternalVendorSku, it.OriginalPrice, it.SalePrice,
+				it.StatusName, it.RocketGrowthItemData.VendorItemId)
+		}
+	}
+
 	// product_items에서 vendorItemId → 상품명/아이템명/seller_product_id 매핑
 	type ItemInfo struct {
 		SellerProductId int64
@@ -1621,6 +1709,94 @@ func batchSyncInventory(userID int64, client *coupang.Client) (int, error) {
 		StatusName      string `json:"statusName"`
 		StockQuantity   int    `json:"stockQuantity"`
 	}
+
+	// product_items에 없는 sellerProductId → 상품 단건 조회 후 등록
+	type RgItemData struct {
+		VendorItemId int64 `json:"vendorItemId"`
+		ItemId       int64 `json:"itemId"`
+	}
+	type DetailProductItem struct {
+		ItemName              string      `json:"itemName"`
+		SellerProductItemName string      `json:"sellerProductItemName"`
+		ExternalVendorSku     string      `json:"externalVendorSku"`
+		OriginalPrice         float64     `json:"originalPrice"`
+		SalePrice             float64     `json:"salePrice"`
+		StatusName            string      `json:"statusName"`
+		RocketGrowthItemData  *RgItemData `json:"rocketGrowthItemData"`
+	}
+	type DetailProduct struct {
+		SellerProductId   int64               `json:"sellerProductId"`
+		SellerProductName string              `json:"sellerProductName"`
+		Brand             string              `json:"brand"`
+		StatusName        string              `json:"statusName"`
+		Items             []DetailProductItem `json:"items"`
+	}
+	type DetailResp struct {
+		Code string        `json:"code"`
+		Data DetailProduct `json:"data"`
+	}
+
+	// 미매핑 항목의 sellerProductId 중 product_items에 없는 것을 수집
+	missingProductIds := map[int64]bool{}
+	for _, raw := range resp.Data.Content {
+		var item InvItem
+		if err := json.Unmarshal(raw, &item); err != nil || item.SellerProductId == 0 {
+			continue
+		}
+		var exists int
+		database.DB.QueryRow(
+			`SELECT COUNT(*) FROM product_items WHERE user_id=? AND seller_product_id=?`,
+			userID, item.SellerProductId,
+		).Scan(&exists)
+		if exists == 0 {
+			missingProductIds[item.SellerProductId] = true
+		}
+	}
+
+	// 상품 단건 조회 → products + product_items 등록
+	for sellerProductId := range missingProductIds {
+		detailBody, err := client.GetProductDetail(sellerProductId)
+		if err != nil {
+			continue
+		}
+		var dr DetailResp
+		if err := json.Unmarshal(detailBody, &dr); err != nil || dr.Data.SellerProductId == 0 {
+			continue
+		}
+		p := dr.Data
+		// products 등록
+		database.DB.Exec(`
+			INSERT INTO products (user_id, seller_product_id, seller_product_name, brand, status_name, synced_at)
+			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(user_id, seller_product_id) DO UPDATE SET
+				seller_product_name = excluded.seller_product_name,
+				brand = excluded.brand,
+				status_name = excluded.status_name,
+				synced_at = CURRENT_TIMESTAMP`,
+			userID, p.SellerProductId, p.SellerProductName, p.Brand, p.StatusName)
+		// product_items 등록
+		for _, it := range p.Items {
+			if it.RocketGrowthItemData == nil || it.RocketGrowthItemData.ItemId == 0 {
+				continue
+			}
+			database.DB.Exec(`
+				INSERT INTO product_items (user_id, seller_product_id, item_id, item_name,
+					seller_product_item_name, external_vendor_sku, original_price, sale_price,
+					status_name, vendor_item_id, synced_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+				ON CONFLICT(user_id, item_id) DO UPDATE SET
+					item_name = excluded.item_name,
+					seller_product_item_name = excluded.seller_product_item_name,
+					external_vendor_sku = excluded.external_vendor_sku,
+					status_name = excluded.status_name,
+					vendor_item_id = excluded.vendor_item_id,
+					synced_at = CURRENT_TIMESTAMP`,
+				userID, p.SellerProductId, it.RocketGrowthItemData.ItemId, it.ItemName,
+				it.SellerProductItemName, it.ExternalVendorSku, it.OriginalPrice, it.SalePrice,
+				it.StatusName, it.RocketGrowthItemData.VendorItemId)
+		}
+	}
+
 	count := 0
 	for _, raw := range resp.Data.Content {
 		var item InvItem

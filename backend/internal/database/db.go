@@ -288,6 +288,11 @@ func migrateBatchLogs() error {
 
 func migrateInventory() error {
 	DB.Exec("ALTER TABLE inventory ADD COLUMN seller_product_id INTEGER DEFAULT 0")
+	// SQLite는 비상수 DEFAULT(CURRENT_TIMESTAMP) 컬럼 추가 불가 → NULL로 추가 후 backfill
+	DB.Exec("ALTER TABLE inventory ADD COLUMN created_at DATETIME DEFAULT NULL")
+	DB.Exec("ALTER TABLE inventory ADD COLUMN out_of_stock_at DATETIME DEFAULT NULL")
+	// 기존 데이터의 created_at을 synced_at으로 채우기
+	DB.Exec("UPDATE inventory SET created_at = synced_at WHERE created_at IS NULL")
 	return nil
 }
 

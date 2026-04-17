@@ -52,6 +52,7 @@ func main() {
 	api.GET("/coupang/products", getProductsFromDB)
 	api.GET("/coupang/products/:productId/items", getProductItemsFromDB)
 	api.GET("/coupang/inventory", getInventoryFromDB)
+	api.GET("/coupang/inventory/alerts", getInventoryAlerts)
 	api.GET("/coupang/orders", getOrdersFromDB)
 	api.GET("/coupang/returns", getReturnsFromDB)
 
@@ -268,10 +269,12 @@ func getInventoryFromDB(c echo.Context) error {
 		pageSize = 20
 	}
 
-	productName := c.QueryParam("productName")
-	optionName := c.QueryParam("optionName")
-	stockStatus := c.QueryParam("stockStatus") // "all" | "in_stock" | "out_of_stock"
-	mappedOnly := c.QueryParam("mappedOnly")   // "true" | "false"
+	productName  := c.QueryParam("productName")
+	optionName   := c.QueryParam("optionName")
+	stockStatus  := c.QueryParam("stockStatus")  // "all" | "in_stock" | "out_of_stock"
+	mappedOnly   := c.QueryParam("mappedOnly")    // "true" | "false" | "" (전체)
+	createdAtFrom := c.QueryParam("createdAtFrom") // yyyy-MM-dd (KST)
+	createdAtTo   := c.QueryParam("createdAtTo")   // yyyy-MM-dd (KST)
 
 	type InventoryItem struct {
 		VendorItemID    int64  `json:"vendorItemId"`
@@ -282,6 +285,8 @@ func getInventoryFromDB(c echo.Context) error {
 		SalesLast30Days int    `json:"salesLast30Days"`
 		IsMapped        bool   `json:"isMapped"`
 		SyncedAt        string `json:"syncedAt"`
+		CreatedAt       string `json:"createdAt"`
+		OutOfStockAt    string `json:"outOfStockAt"`
 	}
 
 	// 전체 통계 (필터 무관, 전체 기준)
@@ -313,6 +318,21 @@ func getInventoryFromDB(c echo.Context) error {
 		where += " AND stock_quantity = 0"
 	}
 
+	// 생성일자 필터 (KST → UTC 변환)
+	kst := time.FixedZone("KST", 9*60*60)
+	if createdAtFrom != "" {
+		if t, err := time.ParseInLocation("2006-01-02", createdAtFrom, kst); err == nil {
+			where += " AND created_at >= ?"
+			args = append(args, t.UTC().Format(time.RFC3339))
+		}
+	}
+	if createdAtTo != "" {
+		if t, err := time.ParseInLocation("2006-01-02", createdAtTo, kst); err == nil {
+			where += " AND created_at < ?"
+			args = append(args, t.Add(24*time.Hour).UTC().Format(time.RFC3339))
+		}
+	}
+
 	// 필터 적용 건수
 	var filteredCount int
 	database.DB.QueryRow("SELECT COUNT(*) FROM inventory "+where, args...).Scan(&filteredCount)
@@ -321,7 +341,8 @@ func getInventoryFromDB(c echo.Context) error {
 	queryArgs := append(args, pageSize, (page-1)*pageSize)
 	rows, err := database.DB.Query(`
 		SELECT vendor_item_id, product_name, item_name, status_name,
-		       stock_quantity, sales_last_30_days, is_mapped, synced_at
+		       stock_quantity, sales_last_30_days, is_mapped, synced_at,
+		       COALESCE(created_at, synced_at), COALESCE(out_of_stock_at, '')
 		FROM inventory
 		`+where+`
 		ORDER BY vendor_item_id DESC
@@ -338,7 +359,7 @@ func getInventoryFromDB(c echo.Context) error {
 		var isMapped int
 		if err := rows.Scan(&it.VendorItemID, &it.ProductName, &it.ItemName,
 			&it.StatusName, &it.StockQuantity, &it.SalesLast30Days,
-			&isMapped, &it.SyncedAt); err != nil {
+			&isMapped, &it.SyncedAt, &it.CreatedAt, &it.OutOfStockAt); err != nil {
 			continue
 		}
 		it.IsMapped = isMapped == 1
@@ -362,6 +383,82 @@ func getInventoryFromDB(c echo.Context) error {
 		"pageSize":        pageSize,
 		"totalPages":      totalPages,
 		"lastSyncedAt":    lastSynced,
+	})
+}
+
+// getInventoryAlerts: 최근 7일 신규 추가 / 품절 항목 반환
+func getInventoryAlerts(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+
+	type AlertItem struct {
+		AlertType       string `json:"alertType"` // "new" | "out_of_stock"
+		VendorItemID    int64  `json:"vendorItemId"`
+		ProductName     string `json:"productName"`
+		ItemName        string `json:"itemName"`
+		StockQuantity   int    `json:"stockQuantity"`
+		SalesLast30Days int    `json:"salesLast30Days"`
+		AlertAt         string `json:"alertAt"` // created_at 또는 out_of_stock_at
+	}
+
+	sevenDaysAgo := time.Now().UTC().Add(-7 * 24 * time.Hour).Format(time.RFC3339)
+
+	// 신규 추가 (최근 7일 created_at)
+	newRows, err := database.DB.Query(`
+		SELECT vendor_item_id, product_name, item_name, stock_quantity, sales_last_30_days,
+		       COALESCE(created_at, synced_at)
+		FROM inventory
+		WHERE user_id = ? AND COALESCE(created_at, synced_at) >= ?
+		ORDER BY created_at DESC
+	`, user.UserID, sevenDaysAgo)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
+	}
+	defer newRows.Close()
+
+	var newItems []AlertItem
+	for newRows.Next() {
+		var it AlertItem
+		it.AlertType = "new"
+		if err := newRows.Scan(&it.VendorItemID, &it.ProductName, &it.ItemName,
+			&it.StockQuantity, &it.SalesLast30Days, &it.AlertAt); err != nil {
+			continue
+		}
+		newItems = append(newItems, it)
+	}
+	if newItems == nil {
+		newItems = []AlertItem{}
+	}
+
+	// 품절 (최근 7일 out_of_stock_at)
+	outRows, err := database.DB.Query(`
+		SELECT vendor_item_id, product_name, item_name, stock_quantity, sales_last_30_days, out_of_stock_at
+		FROM inventory
+		WHERE user_id = ? AND out_of_stock_at IS NOT NULL AND out_of_stock_at >= ?
+		ORDER BY out_of_stock_at DESC
+	`, user.UserID, sevenDaysAgo)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
+	}
+	defer outRows.Close()
+
+	var outItems []AlertItem
+	for outRows.Next() {
+		var it AlertItem
+		it.AlertType = "out_of_stock"
+		if err := outRows.Scan(&it.VendorItemID, &it.ProductName, &it.ItemName,
+			&it.StockQuantity, &it.SalesLast30Days, &it.AlertAt); err != nil {
+			continue
+		}
+		outItems = append(outItems, it)
+	}
+	if outItems == nil {
+		outItems = []AlertItem{}
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"code":        "SUCCESS",
+		"newItems":    newItems,
+		"outOfStock":  outItems,
 	})
 }
 
@@ -1516,10 +1613,17 @@ func batchSyncInventory(userID int64, client *coupang.Client) (int, error) {
 			continue
 		}
 		database.DB.Exec(`
-			INSERT INTO inventory (user_id, vendor_item_id, seller_product_id, product_name, item_name, status_name, stock_quantity, synced_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			INSERT INTO inventory (user_id, vendor_item_id, seller_product_id, product_name, item_name, status_name, stock_quantity, created_at, synced_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 			ON CONFLICT(user_id, vendor_item_id) DO UPDATE SET
-				stock_quantity=excluded.stock_quantity, status_name=excluded.status_name, synced_at=CURRENT_TIMESTAMP`,
+				stock_quantity = excluded.stock_quantity,
+				status_name    = excluded.status_name,
+				synced_at      = CURRENT_TIMESTAMP,
+				out_of_stock_at = CASE
+					WHEN inventory.stock_quantity > 0 AND excluded.stock_quantity = 0 THEN CURRENT_TIMESTAMP
+					WHEN excluded.stock_quantity > 0 THEN NULL
+					ELSE inventory.out_of_stock_at
+				END`,
 			userID, item.VendorItemId, item.SellerProductId, item.ProductName, item.ItemName, item.StatusName, item.StockQuantity)
 		count++
 	}

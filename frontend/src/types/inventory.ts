@@ -24,18 +24,3 @@ export interface InventoryResponse {
   lastSyncedAt: string;
 }
 
-export interface AlertItem {
-  alertType: 'new' | 'out_of_stock';
-  vendorItemId: number;
-  productName: string;
-  itemName: string;
-  stockQuantity: number;
-  salesLast30Days: number;
-  alertAt: string;
-}
-
-export interface InventoryAlertsResponse {
-  code: string;
-  newItems: AlertItem[];
-  outOfStock: AlertItem[];
-}

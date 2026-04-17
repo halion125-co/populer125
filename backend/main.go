@@ -275,6 +275,7 @@ func getInventoryFromDB(c echo.Context) error {
 	mappedOnly   := c.QueryParam("mappedOnly")    // "true" | "false" | "" (전체)
 	createdAtFrom := c.QueryParam("createdAtFrom") // yyyy-MM-dd (KST)
 	createdAtTo   := c.QueryParam("createdAtTo")   // yyyy-MM-dd (KST)
+	alertType    := c.QueryParam("alertType")     // "new" | "out_of_stock" | "" (전체)
 
 	type InventoryItem struct {
 		VendorItemID    int64  `json:"vendorItemId"`
@@ -322,15 +323,29 @@ func getInventoryFromDB(c echo.Context) error {
 	kst := time.FixedZone("KST", 9*60*60)
 	if createdAtFrom != "" {
 		if t, err := time.ParseInLocation("2006-01-02", createdAtFrom, kst); err == nil {
-			where += " AND created_at >= ?"
+			where += " AND COALESCE(created_at, synced_at) >= ?"
 			args = append(args, t.UTC().Format(time.RFC3339))
 		}
 	}
 	if createdAtTo != "" {
 		if t, err := time.ParseInLocation("2006-01-02", createdAtTo, kst); err == nil {
-			where += " AND created_at < ?"
+			where += " AND COALESCE(created_at, synced_at) < ?"
 			args = append(args, t.Add(24*time.Hour).UTC().Format(time.RFC3339))
 		}
+	}
+
+	// alertType: 최근 7일 신규/품절 필터
+	sevenDaysAgo := time.Now().UTC().Add(-7 * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	if alertType == "new" {
+		where += " AND COALESCE(created_at, synced_at) >= ?"
+		args = append(args, sevenDaysAgo)
+	} else if alertType == "out_of_stock" {
+		where += " AND out_of_stock_at IS NOT NULL AND out_of_stock_at >= ?"
+		args = append(args, sevenDaysAgo)
+	} else if alertType == "recent" {
+		// 신규 OR 품절 (둘 중 하나라도 해당)
+		where += " AND (COALESCE(created_at, synced_at) >= ? OR (out_of_stock_at IS NOT NULL AND out_of_stock_at >= ?))"
+		args = append(args, sevenDaysAgo, sevenDaysAgo)
 	}
 
 	// 필터 적용 건수
@@ -338,14 +353,17 @@ func getInventoryFromDB(c echo.Context) error {
 	database.DB.QueryRow("SELECT COUNT(*) FROM inventory "+where, args...).Scan(&filteredCount)
 
 	// 데이터 조회
-	queryArgs := append(args, pageSize, (page-1)*pageSize)
+	queryArgs := append(args, alertType, alertType, pageSize, (page-1)*pageSize)
 	rows, err := database.DB.Query(`
 		SELECT vendor_item_id, product_name, item_name, status_name,
 		       stock_quantity, sales_last_30_days, is_mapped, synced_at,
 		       COALESCE(created_at, synced_at), COALESCE(out_of_stock_at, '')
 		FROM inventory
 		`+where+`
-		ORDER BY vendor_item_id DESC
+		ORDER BY CASE WHEN ? = 'new' THEN COALESCE(created_at, synced_at)
+		              WHEN ? = 'out_of_stock' THEN out_of_stock_at
+		              ELSE NULL END DESC NULLS LAST,
+		         vendor_item_id DESC
 		LIMIT ? OFFSET ?
 	`, queryArgs...)
 	if err != nil {

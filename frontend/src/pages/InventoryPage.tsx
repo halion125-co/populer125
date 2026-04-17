@@ -3,9 +3,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { apiClient } from '../lib/api';
 import { formatKST } from '../lib/formatters';
-import type { InventoryItem, InventoryResponse, AlertItem, InventoryAlertsResponse } from '../types/inventory';
+import type { InventoryItem, InventoryResponse } from '../types/inventory';
 
 const PAGE_SIZE = 20;
+
+type AlertTab = 'all' | 'new' | 'out_of_stock';
 
 interface Filters {
   productName: string;
@@ -30,12 +32,13 @@ const InventoryPage = () => {
   const queryClient = useQueryClient();
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
+  const [alertTab, setAlertTab] = useState<AlertTab>('all');
   const [filterInput, setFilterInput] = useState<Filters>(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState<Filters>(initialFilters);
 
   // 재고 목록 조회
   const { data: apiResponse, isLoading, isFetching, error, refetch } = useQuery({
-    queryKey: ['inventory', page, appliedFilters],
+    queryKey: ['inventory', page, appliedFilters, alertTab],
     queryFn: async () => {
       const params: Record<string, string> = { page: String(page), pageSize: String(PAGE_SIZE) };
       if (appliedFilters.productName) params.productName = appliedFilters.productName;
@@ -44,6 +47,7 @@ const InventoryPage = () => {
       if (appliedFilters.mappedOnly !== 'all') params.mappedOnly = appliedFilters.mappedOnly;
       if (appliedFilters.createdAtFrom) params.createdAtFrom = appliedFilters.createdAtFrom;
       if (appliedFilters.createdAtTo) params.createdAtTo = appliedFilters.createdAtTo;
+      if (alertTab !== 'all') params.alertType = alertTab;
       const response = await apiClient.get<InventoryResponse>('/api/coupang/inventory', { params });
       return response.data;
     },
@@ -51,21 +55,10 @@ const InventoryPage = () => {
     retry: 1,
   });
 
-  // 알림 카드 조회 (신규/품절)
-  const { data: alertsData } = useQuery({
-    queryKey: ['inventoryAlerts'],
-    queryFn: async () => {
-      const response = await apiClient.get<InventoryAlertsResponse>('/api/coupang/inventory/alerts');
-      return response.data;
-    },
-    staleTime: 5 * 60 * 1000,
-  });
-
   const syncMutation = useMutation({
     mutationFn: () => apiClient.post('/api/coupang/sync/inventory'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryAlerts'] });
     },
   });
 
@@ -76,8 +69,6 @@ const InventoryPage = () => {
   const totalInStock = apiResponse?.totalInStock ?? 0;
   const totalOutOfStock = apiResponse?.totalOutOfStock ?? 0;
   const lastSyncedAt = apiResponse?.lastSyncedAt || '';
-  const newItems = alertsData?.newItems || [];
-  const outOfStockItems = alertsData?.outOfStock || [];
 
   const hasActiveFilters = Object.entries(appliedFilters).some(([, v]) => v !== '' && v !== 'all');
   const hasPendingChanges = JSON.stringify(filterInput) !== JSON.stringify(appliedFilters);
@@ -85,6 +76,7 @@ const InventoryPage = () => {
   const handleSearch = () => { setAppliedFilters({ ...filterInput }); setPage(1); };
   const handleReset = () => { setFilterInput(initialFilters); setAppliedFilters(initialFilters); setPage(1); };
   const handlePageChange = (p: number) => { setPage(p); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const handleAlertTab = (tab: AlertTab) => { setAlertTab(tab); setPage(1); };
 
   if (isLoading) {
     return (
@@ -145,15 +137,32 @@ const InventoryPage = () => {
           </div>
         </div>
 
-        {/* 알림 카드 — 최근 1주일 신규/품절 */}
-        {(newItems.length > 0 || outOfStockItems.length > 0) && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* 신규 추가 */}
-            <AlertCard title="최근 1주일 신규 추가" count={newItems.length} color="blue" items={newItems} />
-            {/* 품절 */}
-            <AlertCard title="최근 1주일 품절" count={outOfStockItems.length} color="red" items={outOfStockItems} />
+        {/* 알림 탭 */}
+        <div className="bg-white rounded-lg shadow">
+          <div className="flex border-b border-gray-200">
+            {([
+              { key: 'all', label: '전체' },
+              { key: 'new', label: '신규 추가 (7일)' },
+              { key: 'out_of_stock', label: '품절 (7일)' },
+            ] as { key: AlertTab; label: string }[]).map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => handleAlertTab(key)}
+                className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+                  alertTab === key
+                    ? key === 'new'
+                      ? 'border-blue-500 text-blue-600'
+                      : key === 'out_of_stock'
+                        ? 'border-red-500 text-red-600'
+                        : 'border-gray-800 text-gray-800'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-        )}
+        </div>
 
         {/* 검색 조건 */}
         <div className="bg-white rounded-lg shadow">
@@ -274,13 +283,13 @@ const InventoryPage = () => {
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">판매량(30일)</th>
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">재고상태</th>
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">매핑</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">생성일자</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">품절일자</th>
+                    <th className={`px-4 py-3 text-left text-xs font-medium uppercase ${alertTab === 'new' ? 'text-blue-600 bg-blue-50' : 'text-gray-500'}`}>생성일자</th>
+                    <th className={`px-4 py-3 text-left text-xs font-medium uppercase ${alertTab === 'out_of_stock' ? 'text-red-600 bg-red-50' : 'text-gray-500'}`}>품절일자</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {items.map((item: InventoryItem) => (
-                    <InventoryItemRow key={item.vendorItemId} item={item} />
+                    <InventoryItemRow key={item.vendorItemId} item={item} alertTab={alertTab} />
                   ))}
                 </tbody>
               </table>
@@ -327,63 +336,7 @@ const InventoryPage = () => {
   );
 };
 
-function AlertCard({ title, count, color, items }: {
-  title: string;
-  count: number;
-  color: 'blue' | 'red';
-  items: AlertItem[];
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const colorCls = color === 'blue'
-    ? { border: 'border-blue-200', bg: 'bg-blue-50', title: 'text-blue-700', badge: 'bg-blue-100 text-blue-700' }
-    : { border: 'border-red-200', bg: 'bg-red-50', title: 'text-red-700', badge: 'bg-red-100 text-red-700' };
-
-  return (
-    <div className={`bg-white rounded-lg shadow border ${colorCls.border}`}>
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className={`w-full px-5 py-3 flex items-center justify-between ${colorCls.bg} rounded-t-lg`}
-      >
-        <span className={`font-semibold text-sm ${colorCls.title}`}>
-          {title}
-          <span className={`ml-2 px-2 py-0.5 text-xs rounded-full ${colorCls.badge}`}>{count}건</span>
-        </span>
-        <span className="text-gray-400 text-xs">{expanded ? '▲' : '▼'}</span>
-      </button>
-      {expanded && (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-xs divide-y divide-gray-100">
-            <thead className="bg-gray-50 text-gray-500">
-              <tr>
-                <th className="px-4 py-2 text-left">옵션ID</th>
-                <th className="px-4 py-2 text-left">상품명 / 옵션명</th>
-                <th className="px-4 py-2 text-center">재고수량</th>
-                <th className="px-4 py-2 text-center">30일 판매</th>
-                <th className="px-4 py-2 text-left">{color === 'blue' ? '추가일자' : '품절일자'}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {items.map(item => (
-                <tr key={item.vendorItemId} className="hover:bg-gray-50">
-                  <td className="px-4 py-2 font-mono text-gray-500">{item.vendorItemId}</td>
-                  <td className="px-4 py-2">
-                    <div className="text-gray-800 truncate max-w-[180px]">{item.productName || '-'}</div>
-                    <div className="text-gray-400 truncate max-w-[180px]">{item.itemName || '-'}</div>
-                  </td>
-                  <td className="px-4 py-2 text-center font-medium">{item.stockQuantity.toLocaleString()}</td>
-                  <td className="px-4 py-2 text-center text-gray-500">{item.salesLast30Days}</td>
-                  <td className="px-4 py-2 text-gray-500 whitespace-nowrap">{formatKST(item.alertAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function InventoryItemRow({ item }: { item: InventoryItem }) {
+function InventoryItemRow({ item, alertTab }: { item: InventoryItem; alertTab: AlertTab }) {
   const isInStock = (item.stockQuantity || 0) > 0;
   return (
     <tr className="hover:bg-gray-50">
@@ -406,8 +359,8 @@ function InventoryItemRow({ item }: { item: InventoryItem }) {
           {item.isMapped ? '매핑' : '미매핑'}
         </span>
       </td>
-      <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{formatKST(item.createdAt)}</td>
-      <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{item.outOfStockAt ? formatKST(item.outOfStockAt) : '-'}</td>
+      <td className={`px-4 py-3 text-xs whitespace-nowrap ${alertTab === 'new' ? 'text-blue-600 font-medium bg-blue-50' : 'text-gray-500'}`}>{formatKST(item.createdAt)}</td>
+      <td className={`px-4 py-3 text-xs whitespace-nowrap ${alertTab === 'out_of_stock' ? 'text-red-600 font-medium bg-red-50' : 'text-gray-500'}`}>{item.outOfStockAt ? formatKST(item.outOfStockAt) : '-'}</td>
     </tr>
   );
 }

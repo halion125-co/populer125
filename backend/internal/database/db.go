@@ -293,6 +293,23 @@ func migrateInventory() error {
 	DB.Exec("ALTER TABLE inventory ADD COLUMN out_of_stock_at DATETIME DEFAULT NULL")
 	// 기존 데이터의 created_at을 synced_at으로 채우기
 	DB.Exec("UPDATE inventory SET created_at = synced_at WHERE created_at IS NULL")
+	// 기존 미매핑 재고 중 product_items와 매칭되는 항목 일괄 갱신
+	DB.Exec(`
+		UPDATE inventory SET
+			is_mapped = 1,
+			seller_product_id = (
+				SELECT seller_product_id FROM product_items
+				WHERE product_items.user_id = inventory.user_id
+				  AND product_items.vendor_item_id = inventory.vendor_item_id
+				LIMIT 1
+			)
+		WHERE is_mapped = 0
+		  AND EXISTS (
+			SELECT 1 FROM product_items
+			WHERE product_items.user_id = inventory.user_id
+			  AND product_items.vendor_item_id = inventory.vendor_item_id
+		  )
+	`)
 	return nil
 }
 

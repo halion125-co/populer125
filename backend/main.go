@@ -1631,9 +1631,18 @@ func batchSyncInventory(userID int64, client *coupang.Client) (int, error) {
 			INSERT INTO inventory (user_id, vendor_item_id, seller_product_id, product_name, item_name, status_name, stock_quantity, created_at, synced_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 			ON CONFLICT(user_id, vendor_item_id) DO UPDATE SET
-				stock_quantity = excluded.stock_quantity,
-				status_name    = excluded.status_name,
-				synced_at      = CURRENT_TIMESTAMP,
+				seller_product_id = excluded.seller_product_id,
+				product_name      = excluded.product_name,
+				item_name         = excluded.item_name,
+				status_name       = excluded.status_name,
+				stock_quantity    = excluded.stock_quantity,
+				synced_at         = CURRENT_TIMESTAMP,
+				is_mapped = CASE
+					WHEN EXISTS (
+						SELECT 1 FROM product_items
+						WHERE user_id = excluded.user_id
+						  AND vendor_item_id = excluded.vendor_item_id
+					) THEN 1 ELSE 0 END,
 				out_of_stock_at = CASE
 					WHEN inventory.stock_quantity > 0 AND excluded.stock_quantity = 0 THEN CURRENT_TIMESTAMP
 					WHEN excluded.stock_quantity > 0 THEN NULL

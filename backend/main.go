@@ -89,6 +89,8 @@ func main() {
 	// 스케줄러 시작 (매일 KST 00:00)
 	go startScheduler(e)
 	go startOrderPolling(e)
+	// 재고 1시간마다 자동 동기화
+	go startInventoryHourlyScheduler(e)
 
 	port := fmt.Sprintf(":%s", cfg.ServerPort)
 	e.Logger.Fatal(e.Start(port))
@@ -2157,6 +2159,36 @@ func formatComma(n int64) string {
 }
 
 // startScheduler: 매일 KST 00:00에 모든 배치 실행
+func startInventoryHourlyScheduler(e *echo.Echo) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		rows, err := database.DB.Query(`SELECT id, vendor_id, access_key, secret_key FROM users`)
+		if err != nil {
+			e.Logger.Errorf("[재고 스케줄러] 사용자 조회 실패: %v", err)
+			continue
+		}
+		type userInfo struct {
+			id        int64
+			vendorID  string
+			accessKey string
+			secretKey string
+		}
+		var users []userInfo
+		for rows.Next() {
+			var u userInfo
+			rows.Scan(&u.id, &u.vendorID, &u.accessKey, &u.secretKey)
+			if u.vendorID != "" && u.accessKey != "" {
+				users = append(users, u)
+			}
+		}
+		rows.Close()
+		for _, u := range users {
+			go executeBatchJob(u.id, u.vendorID, u.accessKey, u.secretKey, "inventory", "scheduler")
+		}
+	}
+}
+
 func startScheduler(e *echo.Echo) {
 	loc, _ := time.LoadLocation("Asia/Seoul")
 	for {

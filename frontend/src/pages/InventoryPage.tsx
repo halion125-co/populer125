@@ -7,8 +7,6 @@ import type { InventoryItem, InventoryResponse } from '../types/inventory';
 
 const PAGE_SIZE = 20;
 
-type AlertTab = 'all' | 'new' | 'out_of_stock';
-
 interface Filters {
   productName: string;
   optionName: string;
@@ -27,18 +25,27 @@ const initialFilters: Filters = {
   createdAtTo: '',
 };
 
+interface AlertItem {
+  alertType: 'new' | 'out_of_stock';
+  vendorItemId: number;
+  productName: string;
+  itemName: string;
+  stockQuantity: number;
+  salesLast30Days: number;
+  alertAt: string;
+}
+
 const InventoryPage = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
-  const [alertTab, setAlertTab] = useState<AlertTab>('all');
   const [filterInput, setFilterInput] = useState<Filters>(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState<Filters>(initialFilters);
 
   // 재고 목록 조회
   const { data: apiResponse, isLoading, isFetching, error, refetch } = useQuery({
-    queryKey: ['inventory', page, appliedFilters, alertTab],
+    queryKey: ['inventory', page, appliedFilters],
     queryFn: async () => {
       const params: Record<string, string> = { page: String(page), pageSize: String(PAGE_SIZE) };
       if (appliedFilters.productName) params.productName = appliedFilters.productName;
@@ -47,7 +54,6 @@ const InventoryPage = () => {
       if (appliedFilters.mappedOnly !== 'all') params.mappedOnly = appliedFilters.mappedOnly;
       if (appliedFilters.createdAtFrom) params.createdAtFrom = appliedFilters.createdAtFrom;
       if (appliedFilters.createdAtTo) params.createdAtTo = appliedFilters.createdAtTo;
-      if (alertTab !== 'all') params.alertType = alertTab;
       const response = await apiClient.get<InventoryResponse>('/api/coupang/inventory', { params });
       return response.data;
     },
@@ -55,10 +61,21 @@ const InventoryPage = () => {
     retry: 1,
   });
 
+  // 최근 7일 알림 (신규+품절 통합)
+  const { data: alertsData } = useQuery({
+    queryKey: ['inventoryAlerts'],
+    queryFn: async () => {
+      const res = await apiClient.get<{ code: string; items: AlertItem[] }>('/api/coupang/inventory/alerts');
+      return res.data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
   const syncMutation = useMutation({
     mutationFn: () => apiClient.post('/api/coupang/sync/inventory'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryAlerts'] });
     },
   });
 
@@ -69,6 +86,7 @@ const InventoryPage = () => {
   const totalInStock = apiResponse?.totalInStock ?? 0;
   const totalOutOfStock = apiResponse?.totalOutOfStock ?? 0;
   const lastSyncedAt = apiResponse?.lastSyncedAt || '';
+  const alertItems = alertsData?.items || [];
 
   const hasActiveFilters = Object.entries(appliedFilters).some(([, v]) => v !== '' && v !== 'all');
   const hasPendingChanges = JSON.stringify(filterInput) !== JSON.stringify(appliedFilters);
@@ -76,7 +94,6 @@ const InventoryPage = () => {
   const handleSearch = () => { setAppliedFilters({ ...filterInput }); setPage(1); };
   const handleReset = () => { setFilterInput(initialFilters); setAppliedFilters(initialFilters); setPage(1); };
   const handlePageChange = (p: number) => { setPage(p); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-  const handleAlertTab = (tab: AlertTab) => { setAlertTab(tab); setPage(1); };
 
   if (isLoading) {
     return (
@@ -137,32 +154,8 @@ const InventoryPage = () => {
           </div>
         </div>
 
-        {/* 알림 탭 */}
-        <div className="bg-white rounded-lg shadow">
-          <div className="flex border-b border-gray-200">
-            {([
-              { key: 'all', label: '전체' },
-              { key: 'new', label: '신규 추가 (7일)' },
-              { key: 'out_of_stock', label: '품절 (7일)' },
-            ] as { key: AlertTab; label: string }[]).map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => handleAlertTab(key)}
-                className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
-                  alertTab === key
-                    ? key === 'new'
-                      ? 'border-blue-500 text-blue-600'
-                      : key === 'out_of_stock'
-                        ? 'border-red-500 text-red-600'
-                        : 'border-gray-800 text-gray-800'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* 최근 7일 신규/품절 통합 알림 표 */}
+        <AlertTable items={alertItems} />
 
         {/* 검색 조건 */}
         <div className="bg-white rounded-lg shadow">
@@ -283,13 +276,13 @@ const InventoryPage = () => {
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">판매량(30일)</th>
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">재고상태</th>
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">매핑</th>
-                    <th className={`px-4 py-3 text-left text-xs font-medium uppercase ${alertTab === 'new' ? 'text-blue-600 bg-blue-50' : 'text-gray-500'}`}>생성일자</th>
-                    <th className={`px-4 py-3 text-left text-xs font-medium uppercase ${alertTab === 'out_of_stock' ? 'text-red-600 bg-red-50' : 'text-gray-500'}`}>품절일자</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">생성일자</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">품절일자</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {items.map((item: InventoryItem) => (
-                    <InventoryItemRow key={item.vendorItemId} item={item} alertTab={alertTab} />
+                    <InventoryItemRow key={item.vendorItemId} item={item} />
                   ))}
                 </tbody>
               </table>
@@ -336,7 +329,7 @@ const InventoryPage = () => {
   );
 };
 
-function InventoryItemRow({ item, alertTab }: { item: InventoryItem; alertTab: AlertTab }) {
+function InventoryItemRow({ item }: { item: InventoryItem }) {
   const isInStock = (item.stockQuantity || 0) > 0;
   return (
     <tr className="hover:bg-gray-50">
@@ -359,9 +352,71 @@ function InventoryItemRow({ item, alertTab }: { item: InventoryItem; alertTab: A
           {item.isMapped ? '매핑' : '미매핑'}
         </span>
       </td>
-      <td className={`px-4 py-3 text-xs whitespace-nowrap ${alertTab === 'new' ? 'text-blue-600 font-medium bg-blue-50' : 'text-gray-500'}`}>{formatKST(item.createdAt)}</td>
-      <td className={`px-4 py-3 text-xs whitespace-nowrap ${alertTab === 'out_of_stock' ? 'text-red-600 font-medium bg-red-50' : 'text-gray-500'}`}>{item.outOfStockAt ? formatKST(item.outOfStockAt) : '-'}</td>
+      <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{formatKST(item.createdAt)}</td>
+      <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{item.outOfStockAt ? formatKST(item.outOfStockAt) : '-'}</td>
     </tr>
+  );
+}
+
+function AlertTable({ items }: { items: AlertItem[] }) {
+  const [expanded, setExpanded] = useState(true);
+  const newCount = items.filter(i => i.alertType === 'new').length;
+  const outCount = items.filter(i => i.alertType === 'out_of_stock').length;
+
+  return (
+    <div className="bg-white rounded-lg shadow border border-gray-200">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full px-5 py-3 flex items-center justify-between hover:bg-gray-50 rounded-t-lg"
+      >
+        <div className="flex items-center gap-3">
+          <span className="font-semibold text-sm text-gray-700">최근 7일 알림</span>
+          <span className="px-2 py-0.5 text-xs rounded-full bg-blue-100 text-blue-700">신규 {newCount}건</span>
+          <span className="px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700">품절 {outCount}건</span>
+        </div>
+        <span className="text-gray-400 text-xs">{expanded ? '▲' : '▼'}</span>
+      </button>
+      {expanded && (
+        items.length === 0 ? (
+          <div className="px-5 py-6 text-sm text-gray-400 text-center border-t border-gray-100">최근 7일간 신규 추가 또는 품절된 상품이 없습니다.</div>
+        ) : (
+          <div className="overflow-x-auto border-t border-gray-100">
+            <table className="min-w-full text-xs divide-y divide-gray-100">
+              <thead className="bg-gray-50 text-gray-500">
+                <tr>
+                  <th className="px-4 py-2 text-left font-medium">구분</th>
+                  <th className="px-4 py-2 text-left font-medium">옵션ID</th>
+                  <th className="px-4 py-2 text-left font-medium">상품명 / 옵션명</th>
+                  <th className="px-4 py-2 text-center font-medium">재고수량</th>
+                  <th className="px-4 py-2 text-center font-medium">30일 판매</th>
+                  <th className="px-4 py-2 text-left font-medium">일자</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {items.map((item, idx) => (
+                  <tr key={`${item.alertType}-${item.vendorItemId}-${idx}`} className="hover:bg-gray-50">
+                    <td className="px-4 py-2 whitespace-nowrap">
+                      {item.alertType === 'new'
+                        ? <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">신규</span>
+                        : <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">품절</span>
+                      }
+                    </td>
+                    <td className="px-4 py-2 font-mono text-gray-500 whitespace-nowrap">{item.vendorItemId}</td>
+                    <td className="px-4 py-2">
+                      <div className="text-gray-800 truncate max-w-[200px]">{item.productName || '-'}</div>
+                      <div className="text-gray-400 truncate max-w-[200px]">{item.itemName || '-'}</div>
+                    </td>
+                    <td className="px-4 py-2 text-center font-medium text-gray-700">{(item.stockQuantity || 0).toLocaleString()}</td>
+                    <td className="px-4 py-2 text-center text-gray-500">{item.salesLast30Days || 0}</td>
+                    <td className="px-4 py-2 text-gray-500 whitespace-nowrap">{formatKST(item.alertAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </div>
   );
 }
 

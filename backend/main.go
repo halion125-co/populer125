@@ -404,7 +404,7 @@ func getInventoryFromDB(c echo.Context) error {
 	})
 }
 
-// getInventoryAlerts: 최근 7일 신규 추가 / 품절 항목 반환
+// getInventoryAlerts: 최근 7일 신규 추가 + 품절 통합 목록 반환
 func getInventoryAlerts(c echo.Context) error {
 	user := c.Get("user").(*middleware.UserContext)
 
@@ -415,10 +415,11 @@ func getInventoryAlerts(c echo.Context) error {
 		ItemName        string `json:"itemName"`
 		StockQuantity   int    `json:"stockQuantity"`
 		SalesLast30Days int    `json:"salesLast30Days"`
-		AlertAt         string `json:"alertAt"` // created_at 또는 out_of_stock_at
+		AlertAt         string `json:"alertAt"`
 	}
 
-	sevenDaysAgo := time.Now().UTC().Add(-7 * 24 * time.Hour).Format(time.RFC3339)
+	sevenDaysAgo := time.Now().UTC().Add(-7 * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	var items []AlertItem
 
 	// 신규 추가 (최근 7일 created_at)
 	newRows, err := database.DB.Query(`
@@ -426,14 +427,12 @@ func getInventoryAlerts(c echo.Context) error {
 		       COALESCE(created_at, synced_at)
 		FROM inventory
 		WHERE user_id = ? AND COALESCE(created_at, synced_at) >= ?
-		ORDER BY created_at DESC
+		ORDER BY COALESCE(created_at, synced_at) DESC
 	`, user.UserID, sevenDaysAgo)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
 	}
 	defer newRows.Close()
-
-	var newItems []AlertItem
 	for newRows.Next() {
 		var it AlertItem
 		it.AlertType = "new"
@@ -441,25 +440,21 @@ func getInventoryAlerts(c echo.Context) error {
 			&it.StockQuantity, &it.SalesLast30Days, &it.AlertAt); err != nil {
 			continue
 		}
-		newItems = append(newItems, it)
-	}
-	if newItems == nil {
-		newItems = []AlertItem{}
+		items = append(items, it)
 	}
 
-	// 품절 (최근 7일 out_of_stock_at)
+	// 품절 (최근 7일 out_of_stock_at) — 이미 신규에 포함된 vendor_item_id는 제외
 	outRows, err := database.DB.Query(`
 		SELECT vendor_item_id, product_name, item_name, stock_quantity, sales_last_30_days, out_of_stock_at
 		FROM inventory
 		WHERE user_id = ? AND out_of_stock_at IS NOT NULL AND out_of_stock_at >= ?
+		  AND COALESCE(created_at, synced_at) < ?
 		ORDER BY out_of_stock_at DESC
-	`, user.UserID, sevenDaysAgo)
+	`, user.UserID, sevenDaysAgo, sevenDaysAgo)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
 	}
 	defer outRows.Close()
-
-	var outItems []AlertItem
 	for outRows.Next() {
 		var it AlertItem
 		it.AlertType = "out_of_stock"
@@ -467,16 +462,16 @@ func getInventoryAlerts(c echo.Context) error {
 			&it.StockQuantity, &it.SalesLast30Days, &it.AlertAt); err != nil {
 			continue
 		}
-		outItems = append(outItems, it)
+		items = append(items, it)
 	}
-	if outItems == nil {
-		outItems = []AlertItem{}
+
+	if items == nil {
+		items = []AlertItem{}
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"code":        "SUCCESS",
-		"newItems":    newItems,
-		"outOfStock":  outItems,
+		"code":  "SUCCESS",
+		"items": items,
 	})
 }
 

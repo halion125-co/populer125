@@ -10,11 +10,12 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/rocketgrowth/backend/internal/database"
+	"github.com/rocketgrowth/backend/internal/middleware"
 )
 
 // RegisterDeviceToken upserts an FCM token for the authenticated user.
 func RegisterDeviceToken(c echo.Context) error {
-	userID := c.Get("user_id").(int64)
+	userID := c.Get("user").(*middleware.UserContext).UserID
 
 	var req struct {
 		FCMToken   string `json:"fcm_token"`
@@ -47,7 +48,7 @@ func RegisterDeviceToken(c echo.Context) error {
 
 // RemoveDeviceToken deletes an FCM token on logout.
 func RemoveDeviceToken(c echo.Context) error {
-	userID := c.Get("user_id").(int64)
+	userID := c.Get("user").(*middleware.UserContext).UserID
 
 	var req struct {
 		FCMToken string `json:"fcm_token"`
@@ -62,7 +63,7 @@ func RemoveDeviceToken(c echo.Context) error {
 
 // GetNotificationHistory returns paginated push notification history.
 func GetNotificationHistory(c echo.Context) error {
-	userID := c.Get("user_id").(int64)
+	userID := c.Get("user").(*middleware.UserContext).UserID
 
 	page, _ := strconv.Atoi(c.QueryParam("page"))
 	if page < 1 {
@@ -121,7 +122,7 @@ func GetNotificationHistory(c echo.Context) error {
 
 // GetNotificationSettings returns notification settings for the user.
 func GetNotificationSettings(c echo.Context) error {
-	userID := c.Get("user_id").(int64)
+	userID := c.Get("user").(*middleware.UserContext).UserID
 
 	var pushEnabled int
 	var quietStart, quietEnd string
@@ -150,7 +151,7 @@ func GetNotificationSettings(c echo.Context) error {
 
 // UpdateNotificationSettings saves notification settings.
 func UpdateNotificationSettings(c echo.Context) error {
-	userID := c.Get("user_id").(int64)
+	userID := c.Get("user").(*middleware.UserContext).UserID
 
 	var req struct {
 		PushEnabled bool   `json:"push_enabled"`

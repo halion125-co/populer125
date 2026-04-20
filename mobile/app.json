@@ -52,6 +52,12 @@
         "projectId": "5f7b1e2d-c59e-4df3-8fee-02c2bd1ef957"
       }
     },
-    "owner": "charis.kim"
+    "owner": "charis.kim",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/5f7b1e2d-c59e-4df3-8fee-02c2bd1ef957"
+    }
   }
 }

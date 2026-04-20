@@ -1,4 +1,4 @@
-name: Build Mobile App (Android)
+name: Mobile App CI/CD
 
 on:
   push:
@@ -7,13 +7,56 @@ on:
     paths:
       - 'mobile/**'
   workflow_dispatch:
+    inputs:
+      task:
+        description: '실행할 작업'
+        required: true
+        default: 'update'
+        type: choice
+        options:
+          - update       # OTA 업데이트만 (APK 재설치 불필요)
+          - build-apk    # APK 풀 빌드 (네이티브 코드 변경 시)
 
 jobs:
-  build:
+  # ── OTA 업데이트: mobile/** 변경 시 자동 실행 ──────────────────────────
+  ota-update:
+    name: OTA Update (preview channel)
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' || inputs.task == 'update'
 
     steps:
-      - name: Checkout code
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Publish OTA update
+        working-directory: mobile
+        run: npx eas-cli update --channel preview --message "Auto update from GitHub Actions (${{ github.sha }})" --non-interactive
+
+  # ── APK 풀 빌드: 수동 실행 시만 ───────────────────────────────────────
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    if: inputs.task == 'build-apk'
+
+    steps:
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -37,5 +80,5 @@ jobs:
         working-directory: mobile
         run: npx eas-cli build --profile preview --platform android --non-interactive
 
-      - name: Notify build complete
-        run: echo "✅ Android APK build complete. Download at https://expo.dev/accounts/charis.kim/projects/rocketgrowth/builds"
+      - name: Print download link
+        run: echo "✅ APK 빌드 완료 → https://expo.dev/accounts/charis.kim/projects/rocketgrowth/builds"

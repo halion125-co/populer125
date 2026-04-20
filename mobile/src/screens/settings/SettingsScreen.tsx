@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
+import { useNavigation } from '@react-navigation/native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   getNotificationSettings,
@@ -26,6 +27,7 @@ function formatTime(d: Date): string {
 }
 
 export default function SettingsScreen() {
+  const navigation = useNavigation<any>();
   const [settings, setSettings] = useState<NotificationSettings>({
     push_enabled: true,
     quiet_start: '',
@@ -94,6 +96,12 @@ export default function SettingsScreen() {
       <Text style={styles.sectionTitle}>알림 설정</Text>
 
       <View style={styles.card}>
+        <TouchableOpacity style={styles.row} onPress={() => navigation.navigate('NotificationHistory')}>
+          <Text style={styles.label}>알림 발송 내역</Text>
+          <Text style={styles.arrow}>›</Text>
+        </TouchableOpacity>
+        <View style={styles.divider} />
+
         <View style={styles.row}>
           <View style={styles.rowText}>
             <Text style={styles.label}>푸시 알림 받기</Text>

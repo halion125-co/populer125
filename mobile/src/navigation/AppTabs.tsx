@@ -7,6 +7,8 @@ import DashboardScreen from '../screens/main/DashboardScreen';
 import OrdersScreen from '../screens/main/OrdersScreen';
 import ProfileScreen from '../screens/profile/ProfileScreen';
 import NotificationSettingsScreen from '../screens/notifications/NotificationSettingsScreen';
+import NotificationHistoryScreen from '../screens/notifications/NotificationHistoryScreen';
+import NotificationDetailScreen from '../screens/notifications/NotificationDetailScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
 
 const Tab = createBottomTabNavigator();
@@ -42,6 +44,16 @@ function DashboardStackNav() {
         component={SettingsScreen}
         options={{ title: '설정' }}
       />
+      <DashboardStack.Screen
+        name="NotificationHistory"
+        component={NotificationHistoryScreen}
+        options={{ title: '알림 발송 내역' }}
+      />
+      <DashboardStack.Screen
+        name="NotificationDetail"
+        component={NotificationDetailScreen}
+        options={{ title: '알림 상세' }}
+      />
     </DashboardStack.Navigator>
   );
 }
@@ -61,6 +73,16 @@ function OrdersStackNav() {
         name="Settings"
         component={SettingsScreen}
         options={{ title: '설정' }}
+      />
+      <OrdersStack.Screen
+        name="NotificationHistory"
+        component={NotificationHistoryScreen}
+        options={{ title: '알림 발송 내역' }}
+      />
+      <OrdersStack.Screen
+        name="NotificationDetail"
+        component={NotificationDetailScreen}
+        options={{ title: '알림 상세' }}
       />
     </OrdersStack.Navigator>
   );
@@ -86,6 +108,16 @@ function ProfileStackNav() {
         name="Settings"
         component={SettingsScreen}
         options={{ title: '설정' }}
+      />
+      <ProfileStack.Screen
+        name="NotificationHistory"
+        component={NotificationHistoryScreen}
+        options={{ title: '알림 발송 내역' }}
+      />
+      <ProfileStack.Screen
+        name="NotificationDetail"
+        component={NotificationDetailScreen}
+        options={{ title: '알림 상세' }}
       />
     </ProfileStack.Navigator>
   );

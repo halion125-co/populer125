@@ -133,9 +133,12 @@ func SendToUser(db *sql.DB, userID int64, title string, data map[string]string) 
 		return fmt.Errorf("FCM send: %w", err)
 	}
 
+	log.Printf("[FCM] user=%d 발송 완료: 성공=%d 실패=%d 토큰수=%d", userID, br.SuccessCount, br.FailureCount, len(tokens))
+
 	// Remove stale tokens
 	for i, resp := range br.Responses {
 		if !resp.Success && messaging.IsRegistrationTokenNotRegistered(resp.Error) {
+			log.Printf("[FCM] user=%d 만료된 토큰 삭제: %s", userID, tokens[i][:20]+"...")
 			db.Exec("DELETE FROM device_tokens WHERE user_id = ? AND fcm_token = ?", userID, tokens[i])
 		}
 	}

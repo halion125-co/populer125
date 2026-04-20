@@ -50,6 +50,9 @@ describe('Type Definitions', () => {
       stockQuantity: 100,
       salesLast30Days: 10,
       isMapped: true,
+      syncedAt: '2024-01-01',
+      createdAt: '2024-01-01',
+      outOfStockAt: '',
     };
 
     expect(item.vendorItemId).toBe(123);

@@ -1,10 +1,15 @@
-name: Deploy to NAS
+name: Deploy Backend to NAS
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch: # 수동 실행 가능
+    paths:
+      - 'backend/**'
+      - 'docker-compose.prod.yml'
+      - '.env.prod'
+      - 'frontend/**'
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -32,7 +37,6 @@ jobs:
         run: |
           echo "🚀 Deploying to NAS..."
 
-          # 파일 동기화
           rsync -avz --progress \
             --exclude 'node_modules' \
             --exclude '.git' \
@@ -40,21 +44,21 @@ jobs:
             --exclude 'bin' \
             --exclude 'frontend/dist' \
             --exclude 'backend/server' \
+            --exclude 'mobile/' \
             ./ ${NAS_USER}@${NAS_HOST}:${DEPLOY_PATH}/
 
-          # NAS에서 Docker Compose 실행
-          ssh ${NAS_USER}@${NAS_HOST} << 'ENDSSH'
+          ssh ${NAS_USER}@${NAS_HOST} "
             cd ${DEPLOY_PATH}
-            docker-compose -f docker-compose.prod.yml down
-            docker-compose -f docker-compose.prod.yml build --no-cache
-            docker-compose -f docker-compose.prod.yml up -d
-            docker-compose -f docker-compose.prod.yml ps
-          ENDSSH
+            docker compose -f docker-compose.prod.yml down
+            docker compose -f docker-compose.prod.yml build --no-cache
+            docker compose -f docker-compose.prod.yml up -d
+            docker compose -f docker-compose.prod.yml ps
+          "
 
       - name: Health Check
         run: |
           echo "⏳ Waiting for services to start..."
-          sleep 10
+          sleep 15
 
           echo "🔍 Checking backend health..."
           curl -f http://${{ secrets.NAS_HOST }}:8000/api/health || exit 1

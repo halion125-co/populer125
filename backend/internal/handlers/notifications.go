@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -24,16 +25,21 @@ func RegisterDeviceToken(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "fcm_token is required")
 	}
 
-	_, err := database.DB.Exec(`
-		INSERT INTO device_tokens (user_id, fcm_token, platform, device_name, updated_at)
-		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(user_id, fcm_token) DO UPDATE SET
-			platform    = excluded.platform,
-			device_name = excluded.device_name,
-			updated_at  = CURRENT_TIMESTAMP
-	`, userID, req.FCMToken, req.Platform, req.DeviceName)
+	var existingTokenID int64
+	err := database.DB.QueryRow("SELECT id FROM device_tokens WHERE user_id = ? AND fcm_token = ?", userID, req.FCMToken).Scan(&existingTokenID)
+	if err == sql.ErrNoRows {
+		_, err = database.DB.Exec(
+			"INSERT INTO device_tokens (user_id, fcm_token, platform, device_name, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+			userID, req.FCMToken, req.Platform, req.DeviceName,
+		)
+	} else if err == nil {
+		_, err = database.DB.Exec(
+			"UPDATE device_tokens SET platform=?, device_name=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND fcm_token=?",
+			req.Platform, req.DeviceName, userID, req.FCMToken,
+		)
+	}
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "저장 실패")
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("저장 실패: %v", err))
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
@@ -160,17 +166,22 @@ func UpdateNotificationSettings(c echo.Context) error {
 		pushEnabledInt = 1
 	}
 
-	_, err := database.DB.Exec(`
-		INSERT INTO notification_settings (user_id, push_enabled, quiet_start, quiet_end, updated_at)
-		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(user_id) DO UPDATE SET
-			push_enabled = excluded.push_enabled,
-			quiet_start  = excluded.quiet_start,
-			quiet_end    = excluded.quiet_end,
-			updated_at   = CURRENT_TIMESTAMP
-	`, userID, pushEnabledInt, req.QuietStart, req.QuietEnd)
+	// SELECT 후 INSERT or UPDATE (SQLite UPSERT 버전 호환성 확보)
+	var existingID int64
+	err := database.DB.QueryRow("SELECT id FROM notification_settings WHERE user_id = ?", userID).Scan(&existingID)
+	if err == sql.ErrNoRows {
+		_, err = database.DB.Exec(
+			"INSERT INTO notification_settings (user_id, push_enabled, quiet_start, quiet_end, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+			userID, pushEnabledInt, req.QuietStart, req.QuietEnd,
+		)
+	} else if err == nil {
+		_, err = database.DB.Exec(
+			"UPDATE notification_settings SET push_enabled=?, quiet_start=?, quiet_end=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+			pushEnabledInt, req.QuietStart, req.QuietEnd, userID,
+		)
+	}
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "저장 실패")
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("저장 실패: %v", err))
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})

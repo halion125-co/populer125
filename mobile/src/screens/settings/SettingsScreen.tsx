@@ -102,6 +102,14 @@ export default function SettingsScreen() {
           <Text style={styles.arrow}>›</Text>
         </TouchableOpacity>
         <View style={styles.divider} />
+        <TouchableOpacity style={styles.row} onPress={() => navigation.navigate('FCMDebug')}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>푸시 알림 모니터링</Text>
+            <Text style={styles.desc}>FCM 토큰 등록 현황 및 플로우 상태</Text>
+          </View>
+          <Text style={styles.arrow}>›</Text>
+        </TouchableOpacity>
+        <View style={styles.divider} />
 
         <View style={styles.row}>
           <View style={styles.rowText}>

@@ -10,6 +10,7 @@ import NotificationSettingsScreen from '../screens/notifications/NotificationSet
 import NotificationHistoryScreen from '../screens/notifications/NotificationHistoryScreen';
 import NotificationDetailScreen from '../screens/notifications/NotificationDetailScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
+import FCMDebugScreen from '../screens/settings/FCMDebugScreen';
 
 const Tab = createBottomTabNavigator();
 const DashboardStack = createNativeStackNavigator();
@@ -54,6 +55,11 @@ function DashboardStackNav() {
         component={NotificationDetailScreen}
         options={{ title: '알림 상세' }}
       />
+      <DashboardStack.Screen
+        name="FCMDebug"
+        component={FCMDebugScreen}
+        options={{ title: '푸시 알림 모니터링' }}
+      />
     </DashboardStack.Navigator>
   );
 }
@@ -83,6 +89,11 @@ function OrdersStackNav() {
         name="NotificationDetail"
         component={NotificationDetailScreen}
         options={{ title: '알림 상세' }}
+      />
+      <OrdersStack.Screen
+        name="FCMDebug"
+        component={FCMDebugScreen}
+        options={{ title: '푸시 알림 모니터링' }}
       />
     </OrdersStack.Navigator>
   );
@@ -118,6 +129,11 @@ function ProfileStackNav() {
         name="NotificationDetail"
         component={NotificationDetailScreen}
         options={{ title: '알림 상세' }}
+      />
+      <ProfileStack.Screen
+        name="FCMDebug"
+        component={FCMDebugScreen}
+        options={{ title: '푸시 알림 모니터링' }}
       />
     </ProfileStack.Navigator>
   );

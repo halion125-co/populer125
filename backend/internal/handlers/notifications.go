@@ -120,6 +120,55 @@ func GetNotificationHistory(c echo.Context) error {
 	})
 }
 
+// GetFCMDebugStatus returns FCM token and notification settings for debugging.
+func GetFCMDebugStatus(c echo.Context) error {
+	userID := c.Get("user").(*middleware.UserContext).UserID
+
+	type TokenRow struct {
+		ID         int64  `json:"id"`
+		FCMToken   string `json:"fcm_token"`
+		Platform   string `json:"platform"`
+		DeviceName string `json:"device_name"`
+		UpdatedAt  string `json:"updated_at"`
+	}
+
+	rows, err := database.DB.Query(
+		"SELECT id, fcm_token, platform, device_name, updated_at FROM device_tokens WHERE user_id = ? ORDER BY updated_at DESC",
+		userID,
+	)
+	tokens := []TokenRow{}
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var t TokenRow
+			if rows.Scan(&t.ID, &t.FCMToken, &t.Platform, &t.DeviceName, &t.UpdatedAt) == nil {
+				tokens = append(tokens, t)
+			}
+		}
+	}
+
+	var pushEnabled int
+	var quietStart, quietEnd string
+	settingsErr := database.DB.QueryRow(
+		"SELECT push_enabled, quiet_start, quiet_end FROM notification_settings WHERE user_id = ?",
+		userID,
+	).Scan(&pushEnabled, &quietStart, &quietEnd)
+
+	settings := map[string]interface{}{
+		"found":        settingsErr == nil,
+		"push_enabled": pushEnabled == 1,
+		"quiet_start":  quietStart,
+		"quiet_end":    quietEnd,
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"user_id":       userID,
+		"device_tokens": tokens,
+		"token_count":   len(tokens),
+		"settings":      settings,
+	})
+}
+
 // GetNotificationSettings returns notification settings for the user.
 func GetNotificationSettings(c echo.Context) error {
 	userID := c.Get("user").(*middleware.UserContext).UserID

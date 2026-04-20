@@ -277,6 +277,57 @@ func createTables() error {
 			FOREIGN KEY (user_id) REFERENCES users(id)
 		);
 	`)
+	if err != nil {
+		return err
+	}
+
+	// 모바일 FCM 디바이스 토큰 테이블
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS device_tokens (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id     INTEGER NOT NULL,
+			fcm_token   TEXT NOT NULL,
+			platform    TEXT DEFAULT 'unknown',
+			device_name TEXT DEFAULT '',
+			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(user_id, fcm_token),
+			FOREIGN KEY (user_id) REFERENCES users(id)
+		);
+	`)
+	if err != nil {
+		return err
+	}
+
+	// 모바일 푸시 알림 발송 내역 테이블
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS push_notification_history (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id      INTEGER NOT NULL,
+			title        TEXT NOT NULL DEFAULT '',
+			total_qty    INTEGER DEFAULT 0,
+			total_amount REAL DEFAULT 0,
+			detail_json  TEXT DEFAULT '[]',
+			sent_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (user_id) REFERENCES users(id)
+		);
+	`)
+	if err != nil {
+		return err
+	}
+
+	// 모바일 알림 설정 테이블 (방해금지 시간)
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS notification_settings (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id      INTEGER NOT NULL UNIQUE,
+			push_enabled INTEGER NOT NULL DEFAULT 1,
+			quiet_start  TEXT DEFAULT '',
+			quiet_end    TEXT DEFAULT '',
+			updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (user_id) REFERENCES users(id)
+		);
+	`)
 	return err
 }
 

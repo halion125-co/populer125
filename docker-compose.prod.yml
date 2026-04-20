@@ -14,6 +14,7 @@ services:
       - DATABASE_PATH=/data/rocketgrowth.db
     volumes:
       - ./data:/data
+      - ./mobile/rocketgrowth-dab2d-firebase-adminsdk-fbsvc-a77db45f0a.json:/data/firebase-credentials.json:ro
     ports:
       - "8000:8000"
     networks:

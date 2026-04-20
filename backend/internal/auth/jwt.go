@@ -36,6 +36,33 @@ func GenerateToken(userID int64, email, jwtSecret string) (string, error) {
 	return tokenString, nil
 }
 
+// RefreshToken parses an expired token (within graceDays) and issues a new 24h token.
+func RefreshToken(tokenString, jwtSecret string, graceDays int) (string, error) {
+	claims := &Claims{}
+	_, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("invalid signing method")
+		}
+		return []byte(jwtSecret), nil
+	})
+
+	// Allow ValidationErrorExpired only
+	if err != nil {
+		ve, ok := err.(*jwt.ValidationError)
+		if !ok || ve.Errors&jwt.ValidationErrorExpired == 0 {
+			return "", errors.New("invalid token")
+		}
+	}
+
+	// Reject if issued more than graceDays ago
+	issuedAt := time.Unix(claims.IssuedAt, 0)
+	if time.Since(issuedAt) > time.Duration(graceDays)*24*time.Hour {
+		return "", errors.New("token too old to refresh")
+	}
+
+	return GenerateToken(claims.UserID, claims.Email, jwtSecret)
+}
+
 // ValidateToken validates the JWT token and returns the claims
 func ValidateToken(tokenString, jwtSecret string) (*Claims, error) {
 	claims := &Claims{}

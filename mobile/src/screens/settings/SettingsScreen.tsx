@@ -48,8 +48,9 @@ export default function SettingsScreen() {
     try {
       await updateNotificationSettings(next);
       setSettings(next);
-    } catch {
-      Alert.alert('오류', '설정 저장에 실패했습니다.');
+    } catch (e: any) {
+      const msg = e?.response?.data?.message ?? e?.message ?? '알 수 없는 오류';
+      Alert.alert('설정 저장 실패', msg);
     } finally {
       setSaving(false);
     }

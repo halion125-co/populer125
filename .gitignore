@@ -54,3 +54,16 @@ logs/
 
 # Docker
 .dockerignore
+
+# Mobile
+mobile/node_modules/
+mobile/.expo/
+mobile/android/
+mobile/ios/
+mobile/dist/
+mobile/*.apk
+mobile/*.aab
+mobile/rocketgrowth-*-firebase-adminsdk-*.json
+
+# Claude
+.claude/settings.json

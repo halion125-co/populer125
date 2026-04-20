@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "로켓그로스",
+    "slug": "rocketgrowth",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rocketgrowth.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FF6000"
+      },
+      "package": "com.rocketgrowth.app",
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#FF6000",
+          "sounds": [],
+          "androidMode": "default",
+          "androidCollapsedTitle": "로켓그로스 알림"
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      "expo-secure-store"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "5f7b1e2d-c59e-4df3-8fee-02c2bd1ef957"
+      }
+    },
+    "owner": "charis.kim"
+  }
+}

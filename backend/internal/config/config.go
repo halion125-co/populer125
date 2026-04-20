@@ -5,22 +5,24 @@ import (
 )
 
 type Config struct {
-	CoupangVendorID  string
-	CoupangAccessKey string
-	CoupangSecretKey string
-	JWTSecret        string
-	DatabasePath     string
-	ServerPort       string
+	CoupangVendorID    string
+	CoupangAccessKey   string
+	CoupangSecretKey   string
+	JWTSecret          string
+	DatabasePath       string
+	ServerPort         string
+	FCMCredentialsPath string
 }
 
 func Load() *Config {
 	return &Config{
-		CoupangVendorID:  getEnv("COUPANG_VENDOR_ID", ""),
-		CoupangAccessKey: getEnv("COUPANG_ACCESS_KEY", ""),
-		CoupangSecretKey: getEnv("COUPANG_SECRET_KEY", ""),
-		JWTSecret:        getEnv("JWT_SECRET", "dev-secret-key"),
-		DatabasePath:     getEnv("DATABASE_PATH", "./data/rocketgrowth.db"),
-		ServerPort:       getEnv("BACKEND_PORT", "8000"),
+		CoupangVendorID:    getEnv("COUPANG_VENDOR_ID", ""),
+		CoupangAccessKey:   getEnv("COUPANG_ACCESS_KEY", ""),
+		CoupangSecretKey:   getEnv("COUPANG_SECRET_KEY", ""),
+		JWTSecret:          getEnv("JWT_SECRET", "dev-secret-key"),
+		DatabasePath:       getEnv("DATABASE_PATH", "./data/rocketgrowth.db"),
+		ServerPort:         getEnv("BACKEND_PORT", "8000"),
+		FCMCredentialsPath: getEnv("FCM_CREDENTIALS_PATH", ""),
 	}
 }
 

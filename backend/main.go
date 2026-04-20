@@ -16,6 +16,7 @@ import (
 	"github.com/rocketgrowth/backend/internal/config"
 	"github.com/rocketgrowth/backend/internal/coupang"
 	"github.com/rocketgrowth/backend/internal/database"
+	"github.com/rocketgrowth/backend/internal/fcm"
 	"github.com/rocketgrowth/backend/internal/handlers"
 	"github.com/rocketgrowth/backend/internal/middleware"
 )
@@ -29,6 +30,10 @@ func main() {
 		panic(fmt.Sprintf("Failed to initialize database: %v", err))
 	}
 
+	if err := fcm.Init(cfg.FCMCredentialsPath); err != nil {
+		panic(fmt.Sprintf("Failed to initialize FCM: %v", err))
+	}
+
 	e := echo.New()
 
 	e.Use(echomiddleware.Logger())
@@ -38,6 +43,7 @@ func main() {
 	// Public routes
 	e.POST("/api/auth/login", handlers.Login(cfg))
 	e.POST("/api/auth/register", handlers.Register(cfg))
+	e.POST("/api/auth/refresh", handlers.RefreshToken(cfg))
 	e.GET("/api/health", healthCheck)
 
 	// Protected routes
@@ -85,6 +91,15 @@ func main() {
 
 	// 슬랙 즉시 발송
 	api.POST("/slack/send-today", sendTodaySlack)
+
+	// 모바일 - FCM 디바이스 토큰
+	api.POST("/device-tokens", handlers.RegisterDeviceToken)
+	api.DELETE("/device-tokens", handlers.RemoveDeviceToken)
+
+	// 모바일 - 알림 내역 및 설정
+	api.GET("/notifications/history", handlers.GetNotificationHistory)
+	api.GET("/notifications/settings", handlers.GetNotificationSettings)
+	api.PUT("/notifications/settings", handlers.UpdateNotificationSettings)
 
 	// 스케줄러 시작 (매일 KST 00:00)
 	go startScheduler(e)
@@ -2326,6 +2341,20 @@ func startOrderPolling(e *echo.Echo) {
 					VALUES (?, 'slack', 'scheduler', 'success', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
 					u.id, fmt.Sprintf("신규 %d건", len(newOrders)), len(newOrders), yesterdayStr, tomorrowStr)
 			}
+
+			// 모바일 FCM 푸시 알림 (Slack과 동일 트리거, 서버사이드 방해금지 체크 포함)
+			pushTitle := fmt.Sprintf("판매현황 총%d개/총 %s원", todayTotalQty, formatComma(int64(todayTotalAmt)))
+			go func(uid int64, title string, qty int, amt float64, ls []string) {
+				if err := fcm.SendToUser(database.DB, uid, title, map[string]string{
+					"total_qty":    fmt.Sprintf("%d", qty),
+					"total_amount": fmt.Sprintf("%.0f", amt),
+				}); err != nil {
+					e.Logger.Errorf("[FCM] 푸시 발송 실패 user=%d: %v", uid, err)
+				}
+				if err := fcm.SaveHistory(database.DB, uid, title, qty, amt, ls); err != nil {
+					e.Logger.Errorf("[FCM] 히스토리 저장 실패 user=%d: %v", uid, err)
+				}
+			}(u.id, pushTitle, todayTotalQty, todayTotalAmt, lines)
 		}
 	}
 }

@@ -2346,9 +2346,14 @@ func startOrderPolling(e *echo.Echo) {
 			// 모바일 FCM 푸시 알림 (Slack과 동일 트리거, 서버사이드 방해금지 체크 포함)
 			pushTitle := fmt.Sprintf("판매현황 총%d개/총 %s원", todayTotalQty, formatComma(int64(todayTotalAmt)))
 			go func(uid int64, title string, qty int, amt float64, ls []string) {
+				body := strings.Join(ls, "\n")
+				if len(body) > 100 {
+					body = body[:100] + "..."
+				}
 				if err := fcm.SendToUser(database.DB, uid, title, map[string]string{
 					"total_qty":    fmt.Sprintf("%d", qty),
 					"total_amount": fmt.Sprintf("%.0f", amt),
+					"body":         body,
 				}); err != nil {
 					e.Logger.Errorf("[FCM] 푸시 발송 실패 user=%d: %v", uid, err)
 				}

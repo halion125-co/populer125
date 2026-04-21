@@ -110,19 +110,37 @@ func SendToUser(db *sql.DB, userID int64, title string, data map[string]string) 
 		return nil
 	}
 
+	// Build body from data fields for display
+	body := data["body"]
+	if body == "" {
+		body = data["detail"]
+	}
+
 	msg := &messaging.MulticastMessage{
 		Tokens: tokens,
 		Notification: &messaging.Notification{
 			Title: title,
+			Body:  body,
 		},
 		Data: data,
 		Android: &messaging.AndroidConfig{
 			Priority: "high",
+			Notification: &messaging.AndroidNotification{
+				ChannelID:   "orders",
+				Sound:       "default",
+				Priority:    messaging.PriorityHigh,
+				Visibility:  messaging.VisibilityPublic,
+				ClickAction: "FLUTTER_NOTIFICATION_CLICK",
+			},
 		},
 		APNS: &messaging.APNSConfig{
+			Headers: map[string]string{
+				"apns-priority": "10",
+			},
 			Payload: &messaging.APNSPayload{
 				Aps: &messaging.Aps{
-					Sound: "default",
+					Sound:            "default",
+					ContentAvailable: true,
 				},
 			},
 		},

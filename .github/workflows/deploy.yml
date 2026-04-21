@@ -45,10 +45,10 @@ jobs:
           $SSH ${NAS_USER}@${NAS_HOST} "
             cd ${DEPLOY_PATH}
             git pull origin main
-            /usr/local/bin/docker compose -f docker-compose.prod.yml down
-            /usr/local/bin/docker compose -f docker-compose.prod.yml build --no-cache
-            /usr/local/bin/docker compose -f docker-compose.prod.yml up -d
-            /usr/local/bin/docker compose -f docker-compose.prod.yml ps
+            /usr/local/bin/docker-compose -f docker-compose.prod.yml down
+            /usr/local/bin/docker-compose -f docker-compose.prod.yml build --no-cache
+            /usr/local/bin/docker-compose -f docker-compose.prod.yml up -d
+            /usr/local/bin/docker-compose -f docker-compose.prod.yml ps
           "
 
       - name: Health Check

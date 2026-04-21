@@ -36,22 +36,15 @@ jobs:
           NAS_HOST: ${{ secrets.NAS_HOST }}
           NAS_USER: ${{ secrets.NAS_USER }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          NAS_PORT: ${{ secrets.NAS_SSH_PORT }}
         run: |
           echo "🚀 Deploying to NAS..."
+          SSH="ssh -i /home/runner/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p ${NAS_PORT}"
 
-          rsync -avz --progress \
-            --exclude 'node_modules' \
-            --exclude '.git' \
-            --exclude 'data/*.db' \
-            --exclude 'bin' \
-            --exclude 'frontend/dist' \
-            --exclude 'backend/server' \
-            --exclude 'mobile/' \
-            -e "ssh -i /home/runner/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p ${{ secrets.NAS_SSH_PORT || '22' }}" \
-            ./ ${NAS_USER}@${NAS_HOST}:${DEPLOY_PATH}/
-
-          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p ${{ secrets.NAS_SSH_PORT || '22' }} ${NAS_USER}@${NAS_HOST} "
+          # git pull로 소스 동기화 (rsync 대신)
+          $SSH ${NAS_USER}@${NAS_HOST} "
             cd ${DEPLOY_PATH}
+            git pull origin main
             docker compose -f docker-compose.prod.yml down
             docker compose -f docker-compose.prod.yml build --no-cache
             docker compose -f docker-compose.prod.yml up -d

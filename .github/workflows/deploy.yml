@@ -24,7 +24,8 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.NAS_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H ${{ secrets.NAS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -H ${{ secrets.NAS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -p ${{ secrets.NAS_SSH_PORT || '22' }} -H ${{ secrets.NAS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Deploy to NAS
         env:
@@ -42,10 +43,10 @@ jobs:
             --exclude 'frontend/dist' \
             --exclude 'backend/server' \
             --exclude 'mobile/' \
-            -e "ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no" \
+            -e "ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p ${{ secrets.NAS_SSH_PORT || '22' }}" \
             ./ ${NAS_USER}@${NAS_HOST}:${DEPLOY_PATH}/
 
-          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no ${NAS_USER}@${NAS_HOST} "
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p ${{ secrets.NAS_SSH_PORT || '22' }} ${NAS_USER}@${NAS_HOST} "
             cd ${DEPLOY_PATH}
             docker compose -f docker-compose.prod.yml down
             docker compose -f docker-compose.prod.yml build --no-cache

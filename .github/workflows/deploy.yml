@@ -27,6 +27,10 @@ jobs:
           ssh-keyscan -H ${{ secrets.NAS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
           ssh-keyscan -p ${{ secrets.NAS_SSH_PORT || '22' }} -H ${{ secrets.NAS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
 
+      - name: Test SSH connection
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p ${{ secrets.NAS_SSH_PORT || '22' }} -v ${{ secrets.NAS_USER }}@${{ secrets.NAS_HOST }} "echo SSH OK" 2>&1 | tail -20
+
       - name: Deploy to NAS
         env:
           NAS_HOST: ${{ secrets.NAS_HOST }}

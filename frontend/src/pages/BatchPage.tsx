@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, Link } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { formatKST } from '../lib/formatters';
@@ -92,7 +92,10 @@ export default function BatchPage() {
           <button onClick={() => navigate({ to: '/' })} className="text-gray-400 hover:text-gray-600 text-sm">← 홈</button>
           <h1 className="text-lg font-bold text-gray-800">배치 관리</h1>
         </div>
-        <p className="text-xs text-gray-400">매일 KST 00:00 자동 실행 (전일자 데이터)</p>
+        <div className="flex items-center gap-3">
+          <Link to="/fcm-monitor" className="px-3 py-1.5 text-xs bg-orange-500 text-white rounded hover:bg-orange-600">🔔 FCM 모니터링</Link>
+          <p className="text-xs text-gray-400">매일 KST 00:00 자동 실행 (전일자 데이터)</p>
+        </div>
       </div>
 
       <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">

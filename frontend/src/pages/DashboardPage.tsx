@@ -131,6 +131,14 @@ const DashboardPage = () => {
             </li>
             <li>
               <button
+                onClick={() => navigate({ to: '/fcm-monitor' })}
+                className="w-full text-left px-4 py-3 bg-orange-50 hover:bg-orange-100 rounded-md cursor-pointer"
+              >
+                🔔 FCM 푸시 모니터링
+              </button>
+            </li>
+            <li>
+              <button
                 onClick={() => navigate({ to: '/profile' })}
                 className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-md cursor-pointer"
               >

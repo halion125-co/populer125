@@ -101,6 +101,7 @@ func main() {
 	api.GET("/notifications/settings", handlers.GetNotificationSettings)
 	api.PUT("/notifications/settings", handlers.UpdateNotificationSettings)
 	api.GET("/debug/fcm-status", handlers.GetFCMDebugStatus)
+	api.GET("/admin/fcm-monitor", handlers.GetFCMMonitor)
 
 	// 스케줄러 시작 (매일 KST 00:00)
 	go startScheduler(e)

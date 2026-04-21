@@ -126,11 +126,10 @@ func SendToUser(db *sql.DB, userID int64, title string, data map[string]string) 
 		Android: &messaging.AndroidConfig{
 			Priority: "high",
 			Notification: &messaging.AndroidNotification{
-				ChannelID:   "orders",
-				Sound:       "default",
-				Priority:    messaging.PriorityHigh,
-				Visibility:  messaging.VisibilityPublic,
-				ClickAction: "FLUTTER_NOTIFICATION_CLICK",
+				ChannelID:  "orders",
+				Sound:      "default",
+				Priority:   messaging.PriorityHigh,
+				Visibility: messaging.VisibilityPublic,
 			},
 		},
 		APNS: &messaging.APNSConfig{

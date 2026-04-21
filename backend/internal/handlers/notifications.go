@@ -120,6 +120,101 @@ func GetNotificationHistory(c echo.Context) error {
 	})
 }
 
+// GetFCMMonitor returns all users' FCM token status and push history for admin monitoring.
+func GetFCMMonitor(c echo.Context) error {
+	// Per-user token + settings summary
+	type UserRow struct {
+		UserID     int64  `json:"user_id"`
+		Email      string `json:"email"`
+		TokenCount int    `json:"token_count"`
+		Platforms  string `json:"platforms"`
+		LastSeen   string `json:"last_seen"`
+		PushEnabled int   `json:"push_enabled"`
+		QuietStart string  `json:"quiet_start"`
+		QuietEnd   string  `json:"quiet_end"`
+	}
+
+	userRows, err := database.DB.Query(`
+		SELECT u.id, u.email,
+		       COUNT(dt.id) AS token_count,
+		       GROUP_CONCAT(DISTINCT dt.platform) AS platforms,
+		       MAX(dt.updated_at) AS last_seen
+		FROM users u
+		LEFT JOIN device_tokens dt ON dt.user_id = u.id
+		GROUP BY u.id, u.email
+		ORDER BY u.id
+	`)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "조회 실패")
+	}
+	defer userRows.Close()
+
+	users := []UserRow{}
+	for userRows.Next() {
+		var ur UserRow
+		var platforms, lastSeen sql.NullString
+		if err := userRows.Scan(&ur.UserID, &ur.Email, &ur.TokenCount, &platforms, &lastSeen); err != nil {
+			continue
+		}
+		ur.Platforms = platforms.String
+		ur.LastSeen = lastSeen.String
+
+		// load notification settings
+		var pushEnabled sql.NullInt64
+		var quietStart, quietEnd sql.NullString
+		database.DB.QueryRow(
+			"SELECT push_enabled, quiet_start, quiet_end FROM notification_settings WHERE user_id = ?",
+			ur.UserID,
+		).Scan(&pushEnabled, &quietStart, &quietEnd)
+		if pushEnabled.Valid {
+			ur.PushEnabled = int(pushEnabled.Int64)
+		} else {
+			ur.PushEnabled = 1 // default
+		}
+		ur.QuietStart = quietStart.String
+		ur.QuietEnd = quietEnd.String
+		users = append(users, ur)
+	}
+
+	// Recent push history (last 100)
+	type HistoryRow struct {
+		ID          int64   `json:"id"`
+		UserID      int64   `json:"user_id"`
+		Email       string  `json:"email"`
+		Title       string  `json:"title"`
+		TotalQty    int     `json:"total_qty"`
+		TotalAmount float64 `json:"total_amount"`
+		DetailJSON  string  `json:"detail_json"`
+		SentAt      string  `json:"sent_at"`
+	}
+
+	histRows, err := database.DB.Query(`
+		SELECT h.id, h.user_id, u.email, h.title, h.total_qty, h.total_amount, h.detail_json, h.sent_at
+		FROM push_notification_history h
+		JOIN users u ON u.id = h.user_id
+		ORDER BY h.sent_at DESC
+		LIMIT 100
+	`)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "히스토리 조회 실패")
+	}
+	defer histRows.Close()
+
+	history := []HistoryRow{}
+	for histRows.Next() {
+		var hr HistoryRow
+		if err := histRows.Scan(&hr.ID, &hr.UserID, &hr.Email, &hr.Title, &hr.TotalQty, &hr.TotalAmount, &hr.DetailJSON, &hr.SentAt); err != nil {
+			continue
+		}
+		history = append(history, hr)
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"users":   users,
+		"history": history,
+	})
+}
+
 // GetFCMDebugStatus returns FCM token and notification settings for debugging.
 func GetFCMDebugStatus(c echo.Context) error {
 	userID := c.Get("user").(*middleware.UserContext).UserID

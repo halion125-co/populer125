@@ -41,6 +41,7 @@ export default function FCMMonitorPage() {
       return res.data as { users: UserFCM[]; history: PushHistory[] };
     },
     refetchInterval: 60_000,
+    staleTime: 55_000,
   });
 
   const users: UserFCM[] = data?.users ?? [];

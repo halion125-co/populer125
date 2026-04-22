@@ -41,6 +41,7 @@ func main() {
 	e.Use(echomiddleware.CORSWithConfig(echomiddleware.CORSConfig{
 		AllowOrigins: []string{
 			"https://halion125.synology.me",
+			"https://wing.halion125.synology.me",
 			"https://api.halion125.synology.me",
 			"http://localhost:5173",
 			"http://localhost:3000",

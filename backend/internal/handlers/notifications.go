@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/rocketgrowth/backend/internal/config"
 	"github.com/rocketgrowth/backend/internal/database"
 	"github.com/rocketgrowth/backend/internal/middleware"
 )
@@ -121,7 +122,17 @@ func GetNotificationHistory(c echo.Context) error {
 }
 
 // GetFCMMonitor returns all users' FCM token status and push history for admin monitoring.
-func GetFCMMonitor(c echo.Context) error {
+func GetFCMMonitor(cfg *config.Config) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		user := c.Get("user").(*middleware.UserContext)
+		if cfg.AdminEmail == "" || user.Email != cfg.AdminEmail {
+			return echo.NewHTTPError(http.StatusForbidden, "관리자 권한이 필요합니다")
+		}
+		return getFCMMonitorHandler(c)
+	}
+}
+
+func getFCMMonitorHandler(c echo.Context) error {
 	// Per-user token + settings summary
 	type UserRow struct {
 		UserID     int64  `json:"user_id"`

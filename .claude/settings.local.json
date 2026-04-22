@@ -3,7 +3,9 @@
     "allow": [
       "Bash(docker compose up:*)",
       "Bash(powershell.exe:*)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)"
     ]
   }
 }

@@ -60,7 +60,6 @@ func Login(cfg *config.Config) echo.HandlerFunc {
 				Email:     user.Email,
 				Phone:     user.Phone,
 				VendorID:  user.VendorID,
-				AccessKey: user.AccessKey,
 				HasSecret: user.SecretKey != "",
 				CreatedAt: user.CreatedAt,
 			},
@@ -124,7 +123,6 @@ func Register(cfg *config.Config) echo.HandlerFunc {
 				Email:     req.Email,
 				Phone:     req.Phone,
 				VendorID:  req.VendorID,
-				AccessKey: req.AccessKey,
 				HasSecret: req.SecretKey != "",
 			},
 		})

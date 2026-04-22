@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getToken, saveToken } from '../utils/secureStorage';
 
-export const BASE_URL = 'https://api.halion125.synology.me';
+export const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'https://api.halion125.synology.me';
 
 export const apiClient = axios.create({
   baseURL: BASE_URL,

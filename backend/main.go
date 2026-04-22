@@ -38,7 +38,16 @@ func main() {
 
 	e.Use(echomiddleware.Logger())
 	e.Use(echomiddleware.Recover())
-	e.Use(echomiddleware.CORS())
+	e.Use(echomiddleware.CORSWithConfig(echomiddleware.CORSConfig{
+		AllowOrigins: []string{
+			"https://halion125.synology.me",
+			"https://api.halion125.synology.me",
+			"http://localhost:5173",
+			"http://localhost:3000",
+		},
+		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders: []string{"Content-Type", "Authorization"},
+	}))
 
 	// Public routes
 	e.POST("/api/auth/login", handlers.Login(cfg))
@@ -100,8 +109,10 @@ func main() {
 	api.GET("/notifications/history", handlers.GetNotificationHistory)
 	api.GET("/notifications/settings", handlers.GetNotificationSettings)
 	api.PUT("/notifications/settings", handlers.UpdateNotificationSettings)
-	api.GET("/debug/fcm-status", handlers.GetFCMDebugStatus)
-	api.GET("/admin/fcm-monitor", handlers.GetFCMMonitor)
+	if cfg.DebugMode {
+		api.GET("/debug/fcm-status", handlers.GetFCMDebugStatus)
+	}
+	api.GET("/admin/fcm-monitor", handlers.GetFCMMonitor(cfg))
 
 	// 스케줄러 시작 (매일 KST 00:00)
 	go startScheduler(e)

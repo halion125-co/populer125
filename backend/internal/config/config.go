@@ -12,17 +12,26 @@ type Config struct {
 	DatabasePath       string
 	ServerPort         string
 	FCMCredentialsPath string
+	DebugMode          bool
+	AdminEmail         string
 }
 
 func Load() *Config {
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		panic("JWT_SECRET environment variable must be set")
+	}
+
 	return &Config{
 		CoupangVendorID:    getEnv("COUPANG_VENDOR_ID", ""),
 		CoupangAccessKey:   getEnv("COUPANG_ACCESS_KEY", ""),
 		CoupangSecretKey:   getEnv("COUPANG_SECRET_KEY", ""),
-		JWTSecret:          getEnv("JWT_SECRET", "dev-secret-key"),
+		JWTSecret:          jwtSecret,
 		DatabasePath:       getEnv("DATABASE_PATH", "./data/rocketgrowth.db"),
 		ServerPort:         getEnv("BACKEND_PORT", "8000"),
 		FCMCredentialsPath: getEnv("FCM_CREDENTIALS_PATH", ""),
+		DebugMode:          os.Getenv("DEBUG_MODE") == "true",
+		AdminEmail:         os.Getenv("ADMIN_EMAIL"),
 	}
 }
 

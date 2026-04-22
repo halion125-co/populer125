@@ -22,7 +22,9 @@ backend/tmp/
 backend/*.db
 backend/main
 backend/rocketgrowth
-backend/*.json
+backend/*-firebase-adminsdk-*.json
+backend/firebase-service-account*.json
+backend/serviceAccountKey*.json
 
 # Debug files
 nul
@@ -63,7 +65,13 @@ mobile/ios/
 mobile/dist/
 mobile/*.apk
 mobile/*.aab
+mobile/google-services.json
+mobile/GoogleService-Info.plist
 mobile/rocketgrowth-*-firebase-adminsdk-*.json
+mobile/.env
+mobile/.env.local
+mobile/.env.prod
+mobile/.env.production
 
 # Claude
 .claude/settings.json

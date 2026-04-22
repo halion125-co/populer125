@@ -22,6 +22,7 @@
         "backgroundColor": "#FF6000"
       },
       "package": "com.rocketgrowth.app",
+      "googleServicesFile": "./google-services.json",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [

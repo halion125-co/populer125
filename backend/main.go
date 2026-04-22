@@ -2274,44 +2274,11 @@ func startOrderPolling(e *echo.Echo) {
 				u.id, kstMidnight.Format("2006-01-02T15:04:05Z"), kstTomorrow.Format("2006-01-02T15:04:05Z"))
 			todaySumRow.Scan(&todayTotalQty, &todayTotalAmt)
 
-			// 5. DB에서 사용자 슬랙 웹훅 목록 조회
-			whRows, _ := database.DB.Query(
-				`SELECT webhook_url FROM slack_webhooks WHERE user_id=? AND enabled=1`, u.id)
-			var userWebhooks []string
-			for whRows.Next() {
-				var wurl string
-				whRows.Scan(&wurl)
-				userWebhooks = append(userWebhooks, wurl)
-			}
-			whRows.Close()
-			if len(userWebhooks) == 0 {
-				fmt.Printf("[order polling] 등록된 웹훅 없음 user=%d, 스킵\n", u.id)
-				continue
-			}
-
-			// 신규 주문 없으면 슬랙 발송 생략
-			if len(newOrders) == 0 {
-				// [임시 비활성] 신규 주문 없어도 슬랙 발송 (폴링 동작 확인용)
-				// msg := fmt.Sprintf("[로켓그로스] 신규 주문 없음\n─────────────────\n신규주문이 없습니다.\n─────────────────\n오늘 판매현황 : 총 %d건 / 총 %s원",
-				// 	todayTotalCount,
-				// 	formatComma(int64(todayTotalAmt)),
-				// )
-				// for _, wurl := range userWebhooks {
-				// 	if err := sendSlackNotification(wurl, msg); err != nil {
-				// 		e.Logger.Errorf("[order polling] 슬랙 알림 실패 user=%d: %v", u.id, err)
-				// 	} else {
-				// 		e.Logger.Infof("[order polling] 슬랙 알림 전송 완료 (신규 없음) user=%d", u.id)
-				// 	}
-				// }
-				continue
-			}
-
-			// 6. 슬랙 메시지 작성 (KST 오늘 신규 주문만)
-			todayDate := now.Format("2006-01-02") // KST 오늘 날짜
+			// 5. KST 오늘 신규 주문 라인 작성
+			todayDate := now.Format("2006-01-02")
 			lines := []string{}
 			for _, o := range newOrders {
 				paidTime := time.Unix(o.PaidAt/1000, 0).In(loc)
-				// KST 기준 오늘 날짜인 경우만 포함
 				if paidTime.Format("2006-01-02") != todayDate {
 					continue
 				}
@@ -2327,51 +2294,60 @@ func startOrderPolling(e *echo.Echo) {
 				}
 			}
 
-			// KST 오늘 신규 주문 없으면 슬랙 발송 생략
-			if len(lines) == 0 {
-				continue
+			// 6. 슬랙 발송 (웹훅 있고 신규 주문 있을 때만)
+			whRows, _ := database.DB.Query(
+				`SELECT webhook_url FROM slack_webhooks WHERE user_id=? AND enabled=1`, u.id)
+			var userWebhooks []string
+			for whRows.Next() {
+				var wurl string
+				whRows.Scan(&wurl)
+				userWebhooks = append(userWebhooks, wurl)
+			}
+			whRows.Close()
+
+			if len(userWebhooks) > 0 && len(lines) > 0 {
+				msg := fmt.Sprintf("[로켓그로스] 오늘 판매현황 : 총 %d개 / 총 %s원\n─────────────────\n%s",
+					todayTotalQty,
+					formatComma(int64(todayTotalAmt)),
+					strings.Join(lines, "\n"),
+				)
+				slackSuccess := false
+				for _, wurl := range userWebhooks {
+					if err := sendSlackNotification(wurl, msg); err != nil {
+						e.Logger.Errorf("[order polling] 슬랙 알림 실패 user=%d: %v", u.id, err)
+					} else {
+						e.Logger.Infof("[order polling] 슬랙 알림 전송 완료 user=%d 신규주문=%d건", u.id, len(newOrders))
+						slackSuccess = true
+					}
+				}
+				if slackSuccess {
+					database.DB.Exec(`
+						INSERT INTO batch_logs (user_id, job_type, triggered_by, status, message, record_count, from_date, to_date, started_at, finished_at)
+						VALUES (?, 'slack', 'scheduler', 'success', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+						u.id, fmt.Sprintf("신규 %d건", len(newOrders)), len(newOrders), yesterdayStr, tomorrowStr)
+				}
 			}
 
-			msg := fmt.Sprintf("[로켓그로스] 오늘 판매현황 : 총 %d개 / 총 %s원\n─────────────────\n%s",
-				todayTotalQty,
-				formatComma(int64(todayTotalAmt)),
-				strings.Join(lines, "\n"),
-			)
-
-			slackSuccess := false
-			for _, wurl := range userWebhooks {
-				if err := sendSlackNotification(wurl, msg); err != nil {
-					e.Logger.Errorf("[order polling] 슬랙 알림 실패 user=%d: %v", u.id, err)
-				} else {
-					e.Logger.Infof("[order polling] 슬랙 알림 전송 완료 user=%d 신규주문=%d건", u.id, len(newOrders))
-					slackSuccess = true
-				}
+			// 7. FCM 푸시 발송 (신규 주문 있을 때만, 슬랙 무관)
+			if len(lines) > 0 {
+				pushTitle := fmt.Sprintf("판매현황 총%d개/총 %s원", todayTotalQty, formatComma(int64(todayTotalAmt)))
+				go func(uid int64, title string, qty int, amt float64, ls []string) {
+					body := strings.Join(ls, "\n")
+					if len(body) > 100 {
+						body = body[:100] + "..."
+					}
+					if err := fcm.SendToUser(database.DB, uid, title, map[string]string{
+						"total_qty":    fmt.Sprintf("%d", qty),
+						"total_amount": fmt.Sprintf("%.0f", amt),
+						"body":         body,
+					}); err != nil {
+						e.Logger.Errorf("[FCM] 푸시 발송 실패 user=%d: %v", uid, err)
+					}
+					if err := fcm.SaveHistory(database.DB, uid, title, qty, amt, ls); err != nil {
+						e.Logger.Errorf("[FCM] 히스토리 저장 실패 user=%d: %v", uid, err)
+					}
+				}(u.id, pushTitle, todayTotalQty, todayTotalAmt, lines)
 			}
-			if slackSuccess {
-				database.DB.Exec(`
-					INSERT INTO batch_logs (user_id, job_type, triggered_by, status, message, record_count, from_date, to_date, started_at, finished_at)
-					VALUES (?, 'slack', 'scheduler', 'success', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-					u.id, fmt.Sprintf("신규 %d건", len(newOrders)), len(newOrders), yesterdayStr, tomorrowStr)
-			}
-
-			// 모바일 FCM 푸시 알림 (Slack과 동일 트리거, 서버사이드 방해금지 체크 포함)
-			pushTitle := fmt.Sprintf("판매현황 총%d개/총 %s원", todayTotalQty, formatComma(int64(todayTotalAmt)))
-			go func(uid int64, title string, qty int, amt float64, ls []string) {
-				body := strings.Join(ls, "\n")
-				if len(body) > 100 {
-					body = body[:100] + "..."
-				}
-				if err := fcm.SendToUser(database.DB, uid, title, map[string]string{
-					"total_qty":    fmt.Sprintf("%d", qty),
-					"total_amount": fmt.Sprintf("%.0f", amt),
-					"body":         body,
-				}); err != nil {
-					e.Logger.Errorf("[FCM] 푸시 발송 실패 user=%d: %v", uid, err)
-				}
-				if err := fcm.SaveHistory(database.DB, uid, title, qty, amt, ls); err != nil {
-					e.Logger.Errorf("[FCM] 히스토리 저장 실패 user=%d: %v", uid, err)
-				}
-			}(u.id, pushTitle, todayTotalQty, todayTotalAmt, lines)
 		}
 	}
 }

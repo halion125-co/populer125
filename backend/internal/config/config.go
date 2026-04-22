@@ -12,7 +12,6 @@ type Config struct {
 	DatabasePath       string
 	ServerPort         string
 	FCMCredentialsPath string
-	DebugMode          bool
 	AdminEmail         string
 }
 
@@ -30,7 +29,6 @@ func Load() *Config {
 		DatabasePath:       getEnv("DATABASE_PATH", "./data/rocketgrowth.db"),
 		ServerPort:         getEnv("BACKEND_PORT", "8000"),
 		FCMCredentialsPath: getEnv("FCM_CREDENTIALS_PATH", ""),
-		DebugMode:          os.Getenv("DEBUG_MODE") == "true",
 		AdminEmail:         os.Getenv("ADMIN_EMAIL"),
 	}
 }

@@ -94,7 +94,18 @@ export default function FCMDebugScreen() {
     return <View style={styles.center}><ActivityIndicator color="#FF6000" size="large" /></View>;
   }
 
-  const s = status!;
+  if (!status) {
+    return (
+      <View style={styles.center}>
+        <Text style={{ color: '#888', fontSize: 14 }}>FCM 상태를 불러올 수 없습니다.</Text>
+        <TouchableOpacity style={[styles.refreshBtn, { marginTop: 16 }]} onPress={refresh}>
+          <Text style={styles.refreshBtnText}>다시 시도</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const s = status;
 
   return (
     <ScrollView style={styles.container}>

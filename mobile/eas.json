@@ -16,6 +16,9 @@
       "android": {
         "buildType": "apk"
       },
+      "ios": { 
+        "simulator": false 
+      },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://api.halion125.synology.me"
       },

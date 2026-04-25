@@ -13,6 +13,7 @@ type Config struct {
 	ServerPort         string
 	FCMCredentialsPath string
 	AdminEmail         string
+	AdminPassword      string
 }
 
 func Load() *Config {
@@ -29,7 +30,8 @@ func Load() *Config {
 		DatabasePath:       getEnv("DATABASE_PATH", "./data/rocketgrowth.db"),
 		ServerPort:         getEnv("BACKEND_PORT", "8000"),
 		FCMCredentialsPath: getEnv("FCM_CREDENTIALS_PATH", ""),
-		AdminEmail:         os.Getenv("ADMIN_EMAIL"),
+		AdminEmail:         getEnv("ADMIN_EMAIL", "halion125@gmail.com"),
+		AdminPassword:      os.Getenv("ADMIN_PASSWORD"),
 	}
 }
 

@@ -29,6 +29,7 @@ export interface UserProfile {
   customsType: string;
   customsNumber: string;
   createdAt: string;
+  isAdmin?: boolean;
 }
 
 export interface LoginResponse {
@@ -46,4 +47,7 @@ export interface AuthContextType {
   refreshUser: () => Promise<void>;
   isAuthenticated: boolean;
   isLoading: boolean;
+  impersonating: boolean;
+  startImpersonation: (targetUserId: number) => Promise<void>;
+  stopImpersonation: () => void;
 }

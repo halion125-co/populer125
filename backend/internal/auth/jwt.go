@@ -9,8 +9,9 @@ import (
 
 // Claims represents the JWT claims structure
 type Claims struct {
-	UserID int64  `json:"user_id"`
-	Email  string `json:"email"`
+	UserID         int64  `json:"user_id"`
+	Email          string `json:"email"`
+	ImpersonatedBy int64  `json:"impersonated_by,omitempty"`
 	jwt.StandardClaims
 }
 
@@ -34,6 +35,21 @@ func GenerateToken(userID int64, email, jwtSecret string) (string, error) {
 	}
 
 	return tokenString, nil
+}
+
+// GenerateImpersonationToken creates a 2-hour token for admin impersonating targetUserID.
+func GenerateImpersonationToken(targetUserID int64, targetEmail string, adminUserID int64, jwtSecret string) (string, error) {
+	claims := &Claims{
+		UserID:         targetUserID,
+		Email:          targetEmail,
+		ImpersonatedBy: adminUserID,
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(2 * time.Hour).Unix(),
+			IssuedAt:  time.Now().Unix(),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(jwtSecret))
 }
 
 // RefreshToken parses an expired token (within graceDays) and issues a new 24h token.

@@ -29,7 +29,7 @@ type UserProfile struct {
 	Phone           string `json:"phone"`
 	VendorID        string `json:"vendorId"`
 	AccessKey       string `json:"accessKey"`
-	HasSecret       bool   `json:"hasSecret"` // true if secret key is set
+	HasSecret       bool   `json:"hasSecret"`
 	NameKo          string `json:"nameKo"`
 	NameEn          string `json:"nameEn"`
 	Zipcode         string `json:"zipcode"`
@@ -40,4 +40,5 @@ type UserProfile struct {
 	CustomsType     string `json:"customsType"`
 	CustomsNumber   string `json:"customsNumber"`
 	CreatedAt       string `json:"createdAt"`
+	IsAdmin         bool   `json:"isAdmin"`
 }

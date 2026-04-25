@@ -13,11 +13,24 @@ import (
 
 // UserContext holds the authenticated user info for handlers
 type UserContext struct {
-	UserID    int64
-	Email     string
-	VendorID  string
-	AccessKey string
-	SecretKey string
+	UserID         int64
+	Email          string
+	VendorID       string
+	AccessKey      string
+	SecretKey      string
+	IsAdmin        bool
+	ImpersonatedBy int64 // non-zero when admin is impersonating
+}
+
+// AdminOnly rejects non-admin requests with 403.
+func AdminOnly(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		uc := c.Get("user").(*UserContext)
+		if !uc.IsAdmin {
+			return echo.NewHTTPError(http.StatusForbidden, "forbidden")
+		}
+		return next(c)
+	}
 }
 
 // JWTAuthMiddleware validates JWT tokens and loads user from DB
@@ -42,12 +55,13 @@ func JWTAuthMiddleware(cfg *config.Config) echo.MiddlewareFunc {
 				return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
 			}
 
-			// 4. Load user from DB to get Coupang API credentials
+			// 4. Load user from DB
 			var vendorID, accessKey, secretKey string
+			var isAdmin int
 			err = database.DB.QueryRow(
-				"SELECT vendor_id, access_key, secret_key FROM users WHERE id = ?",
+				"SELECT vendor_id, access_key, secret_key, is_admin FROM users WHERE id = ?",
 				claims.UserID,
-			).Scan(&vendorID, &accessKey, &secretKey)
+			).Scan(&vendorID, &accessKey, &secretKey, &isAdmin)
 			if err == sql.ErrNoRows {
 				return echo.NewHTTPError(http.StatusUnauthorized, "user not found")
 			}
@@ -57,11 +71,13 @@ func JWTAuthMiddleware(cfg *config.Config) echo.MiddlewareFunc {
 
 			// 5. Store user context for handlers
 			c.Set("user", &UserContext{
-				UserID:    claims.UserID,
-				Email:     claims.Email,
-				VendorID:  vendorID,
-				AccessKey: accessKey,
-				SecretKey: secretKey,
+				UserID:         claims.UserID,
+				Email:          claims.Email,
+				VendorID:       vendorID,
+				AccessKey:      accessKey,
+				SecretKey:      secretKey,
+				IsAdmin:        isAdmin == 1,
+				ImpersonatedBy: claims.ImpersonatedBy,
 			})
 
 			return next(c)

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var DB *sql.DB
@@ -213,6 +214,52 @@ func createTables() error {
 		return err
 	}
 
+	// 매출내역 테이블 (쿠팡 revenue-history API 기반)
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS revenue_history (
+			id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id                    INTEGER NOT NULL,
+			order_id                   INTEGER NOT NULL,
+			sale_type                  TEXT DEFAULT '',
+			sale_date                  TEXT DEFAULT '',
+			recognition_date           TEXT DEFAULT '',
+			settlement_date            TEXT DEFAULT '',
+			final_settlement_date      TEXT DEFAULT '',
+			delivery_fee_amount        REAL DEFAULT 0,
+			delivery_settlement_amount REAL DEFAULT 0,
+			raw_json                   TEXT DEFAULT '',
+			synced_at                  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(user_id, order_id, sale_type, recognition_date)
+		);
+	`)
+	if err != nil {
+		return err
+	}
+
+	// 매출내역 상품별 정산 상세 테이블
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS revenue_history_items (
+			id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id                  INTEGER NOT NULL,
+			order_id                 INTEGER NOT NULL,
+			sale_type                TEXT DEFAULT '',
+			recognition_date         TEXT DEFAULT '',
+			vendor_item_id           INTEGER DEFAULT 0,
+			product_name             TEXT DEFAULT '',
+			vendor_item_name         TEXT DEFAULT '',
+			sale_price               REAL DEFAULT 0,
+			quantity                 INTEGER DEFAULT 0,
+			sale_amount              REAL DEFAULT 0,
+			service_fee              REAL DEFAULT 0,
+			service_fee_ratio        REAL DEFAULT 0,
+			settlement_amount        REAL DEFAULT 0,
+			external_seller_sku_code TEXT DEFAULT ''
+		);
+	`)
+	if err != nil {
+		return err
+	}
+
 	// 주문 동기화 날짜 범위 이력 테이블
 	_, err = DB.Exec(`
 		CREATE TABLE IF NOT EXISTS order_sync_ranges (
@@ -389,9 +436,34 @@ func migrateUsers() error {
 		{"customs_type", "TEXT DEFAULT 'personal'"},
 		{"customs_number", "TEXT DEFAULT ''"},
 		{"polling_interval_min", "INTEGER DEFAULT 10"},
+		{"is_admin", "INTEGER DEFAULT 0"},
 	}
 	for _, col := range cols {
 		DB.Exec("ALTER TABLE users ADD COLUMN " + col.name + " " + col.def)
 	}
 	return nil
+}
+
+// EnsureAdminUser creates or marks halion125@gmail.com as admin.
+// If the account does not exist, it is created with the given password.
+// If it already exists, only is_admin is set to 1 (password unchanged).
+func EnsureAdminUser(email, password string) error {
+	var id int64
+	err := DB.QueryRow("SELECT id FROM users WHERE email = ?", email).Scan(&id)
+	if err == sql.ErrNoRows {
+		hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("bcrypt error: %w", err)
+		}
+		_, err = DB.Exec(
+			"INSERT INTO users (email, password, is_admin) VALUES (?, ?, 1)",
+			email, string(hashed),
+		)
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	_, err = DB.Exec("UPDATE users SET is_admin=1 WHERE id=?", id)
+	return err
 }

@@ -8,6 +8,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [user, setUser] = useState<UserProfile | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [impersonating, setImpersonating] = useState(false);
+  const [originalAdminToken, setOriginalAdminToken] = useState<string | null>(null);
+  const [originalAdminUser, setOriginalAdminUser] = useState<UserProfile | null>(null);
 
   // Initialize: Load token from localStorage
   useEffect(() => {
@@ -72,6 +75,34 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     localStorage.removeItem('user');
     setToken(null);
     setUser(null);
+    setImpersonating(false);
+    setOriginalAdminToken(null);
+    setOriginalAdminUser(null);
+  };
+
+  const startImpersonation = async (targetUserId: number) => {
+    const response = await apiClient.post<{ token: string; user: UserProfile }>(
+      `/api/admin/impersonate/${targetUserId}`
+    );
+    const { token: impToken, user: impUser } = response.data;
+    setOriginalAdminToken(token);
+    setOriginalAdminUser(user);
+    localStorage.setItem('auth_token', impToken);
+    localStorage.setItem('user', JSON.stringify(impUser));
+    setToken(impToken);
+    setUser(impUser);
+    setImpersonating(true);
+  };
+
+  const stopImpersonation = () => {
+    if (!originalAdminToken || !originalAdminUser) return;
+    localStorage.setItem('auth_token', originalAdminToken);
+    localStorage.setItem('user', JSON.stringify(originalAdminUser));
+    setToken(originalAdminToken);
+    setUser(originalAdminUser);
+    setImpersonating(false);
+    setOriginalAdminToken(null);
+    setOriginalAdminUser(null);
   };
 
   return (
@@ -84,6 +115,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       refreshUser,
       isAuthenticated: !!token,
       isLoading,
+      impersonating,
+      startImpersonation,
+      stopImpersonation,
     }}>
       {children}
     </AuthContext.Provider>

@@ -261,6 +261,85 @@ func (c *Client) GetInventory(vendorItemId string) ([]byte, error) {
 	return c.Request("GET", path, "")
 }
 
+// revenueHistoryPage represents a paginated response from revenue-history API
+type revenueHistoryPage struct {
+	Code      interface{}       `json:"code"`
+	Message   string            `json:"message"`
+	Data      []json.RawMessage `json:"data"`
+	HasNext   bool              `json:"hasNext"`
+	NextToken string            `json:"nextToken"`
+}
+
+// GetRevenueHistory fetches revenue history by splitting date range into 31-day chunks (API limit)
+func (c *Client) GetRevenueHistory(from, to string) ([]json.RawMessage, error) {
+	fromDate, err := time.Parse("2006-01-02", from)
+	if err != nil {
+		return nil, fmt.Errorf("invalid from format: %w", err)
+	}
+	toDate, err := time.Parse("2006-01-02", to)
+	if err != nil {
+		return nil, fmt.Errorf("invalid to format: %w", err)
+	}
+	toDateExclusive := toDate.AddDate(0, 0, 1)
+
+	path := "/v2/providers/openapi/apis/api/v1/revenue-history"
+	var allRecords []json.RawMessage
+
+	currentFrom := fromDate
+	chunkIndex := 0
+	for currentFrom.Before(toDateExclusive) {
+		if chunkIndex > 0 {
+			time.Sleep(1 * time.Second)
+		}
+		chunkIndex++
+
+		currentTo := currentFrom.AddDate(0, 0, 31)
+		if currentTo.After(toDateExclusive) {
+			currentTo = toDateExclusive
+		}
+		apiTo := currentTo
+		if apiTo.Equal(toDateExclusive) {
+			apiTo = toDate
+		}
+
+		fromStr := currentFrom.Format("2006-01-02")
+		toStr := apiTo.Format("2006-01-02")
+
+		token := ""
+		pageIndex := 0
+		for {
+			if pageIndex > 0 {
+				time.Sleep(500 * time.Millisecond)
+			}
+			pageIndex++
+
+			query := fmt.Sprintf("vendorId=%s&recognitionDateFrom=%s&recognitionDateTo=%s&token=%s&maxPerPage=50",
+				c.VendorID, fromStr, toStr, token)
+
+			body, err := c.requestWithRetry("GET", path, query)
+			if err != nil {
+				return nil, err
+			}
+
+			var page revenueHistoryPage
+			if err := json.Unmarshal(body, &page); err != nil {
+				return nil, fmt.Errorf("failed to parse revenue-history response: %w", err)
+			}
+
+			allRecords = append(allRecords, page.Data...)
+
+			if !page.HasNext || page.NextToken == "" {
+				break
+			}
+			token = page.NextToken
+		}
+
+		currentFrom = currentTo
+	}
+
+	return allRecords, nil
+}
+
 // GetInventorySummaries fetches ALL inventory summaries from Rocket Warehouse (with pagination)
 func (c *Client) GetInventorySummaries() ([]json.RawMessage, error) {
 	path := fmt.Sprintf("/v2/providers/rg_open_api/apis/api/v1/vendors/%s/rg/inventory/summaries", c.VendorID)

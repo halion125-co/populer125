@@ -30,6 +30,13 @@ func main() {
 		panic(fmt.Sprintf("Failed to initialize database: %v", err))
 	}
 
+	if cfg.AdminPassword == "" {
+		panic("ADMIN_PASSWORD environment variable must be set")
+	}
+	if err := database.EnsureAdminUser(cfg.AdminEmail, cfg.AdminPassword); err != nil {
+		panic(fmt.Sprintf("Failed to ensure admin user: %v", err))
+	}
+
 	if err := fcm.Init(cfg.FCMCredentialsPath); err != nil {
 		panic(fmt.Sprintf("Failed to initialize FCM: %v", err))
 	}
@@ -71,12 +78,14 @@ func main() {
 	api.GET("/coupang/inventory/alerts", getInventoryAlerts)
 	api.GET("/coupang/orders", getOrdersFromDB)
 	api.GET("/coupang/returns", getReturnsFromDB)
+	api.GET("/coupang/revenue", getRevenueFromDB)
 
 	// 동기화 (쿠팡 API 호출 → DB 저장)
 	api.POST("/coupang/sync/products", syncProducts)
 	api.POST("/coupang/sync/inventory", syncInventory)
 	api.POST("/coupang/sync/orders", syncOrders)
 	api.POST("/coupang/sync/returns", syncReturns)
+	api.POST("/coupang/sync/revenue", syncRevenue)
 
 	// 동기화 상태 조회
 	api.GET("/coupang/sync/status", getSyncStatus)
@@ -111,6 +120,11 @@ func main() {
 	api.GET("/notifications/settings", handlers.GetNotificationSettings)
 	api.PUT("/notifications/settings", handlers.UpdateNotificationSettings)
 	api.GET("/debug/fcm-status", handlers.GetFCMDebugStatus)
+
+	// Admin routes
+	adminGroup := api.Group("/admin", middleware.AdminOnly)
+	adminGroup.GET("/users", handlers.GetAdminUsers)
+	adminGroup.POST("/impersonate/:id", handlers.ImpersonateUser(cfg))
 	api.GET("/admin/fcm-monitor", handlers.GetFCMMonitor(cfg))
 
 	// 스케줄러 시작 (매일 KST 00:00)
@@ -1465,6 +1479,217 @@ func syncReturns(c echo.Context) error {
 		"syncedAt":  syncedAt,
 		"fromDate":  fromStr,
 		"toDate":    toStr,
+	})
+}
+
+// getRevenueFromDB: DB에서 매출내역 목록 반환
+func getRevenueFromDB(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+
+	from := c.QueryParam("from")
+	to := c.QueryParam("to")
+	saleType := c.QueryParam("saleType")
+
+	type RevenueItemRow struct {
+		VendorItemId        int64   `json:"vendorItemId"`
+		ProductName         string  `json:"productName"`
+		VendorItemName      string  `json:"vendorItemName"`
+		SalePrice           float64 `json:"salePrice"`
+		Quantity            int     `json:"quantity"`
+		SaleAmount          float64 `json:"saleAmount"`
+		ServiceFee          float64 `json:"serviceFee"`
+		ServiceFeeRatio     float64 `json:"serviceFeeRatio"`
+		SettlementAmount    float64 `json:"settlementAmount"`
+		ExternalSellerSkuCode string `json:"externalSellerSkuCode"`
+	}
+	type RevenueRow struct {
+		OrderId                  int64            `json:"orderId"`
+		SaleType                 string           `json:"saleType"`
+		SaleDate                 string           `json:"saleDate"`
+		RecognitionDate          string           `json:"recognitionDate"`
+		SettlementDate           string           `json:"settlementDate"`
+		FinalSettlementDate      string           `json:"finalSettlementDate"`
+		DeliveryFeeAmount        float64          `json:"deliveryFeeAmount"`
+		DeliverySettlementAmount float64          `json:"deliverySettlementAmount"`
+		Items                    []RevenueItemRow `json:"items"`
+	}
+
+	q := `SELECT order_id, sale_type, sale_date, recognition_date, settlement_date,
+		final_settlement_date, delivery_fee_amount, delivery_settlement_amount
+		FROM revenue_history WHERE user_id = ?`
+	args := []interface{}{user.UserID}
+
+	if from != "" {
+		q += " AND recognition_date >= ?"
+		args = append(args, from)
+	}
+	if to != "" {
+		q += " AND recognition_date <= ?"
+		args = append(args, to)
+	}
+	if saleType != "" {
+		q += " AND sale_type = ?"
+		args = append(args, saleType)
+	}
+	q += " ORDER BY recognition_date DESC, order_id DESC"
+
+	rows, err := database.DB.Query(q, args...)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB 조회 실패"})
+	}
+	defer rows.Close()
+
+	var revenues []RevenueRow
+	for rows.Next() {
+		var r RevenueRow
+		if err := rows.Scan(&r.OrderId, &r.SaleType, &r.SaleDate, &r.RecognitionDate,
+			&r.SettlementDate, &r.FinalSettlementDate,
+			&r.DeliveryFeeAmount, &r.DeliverySettlementAmount); err != nil {
+			continue
+		}
+		r.Items = []RevenueItemRow{}
+		revenues = append(revenues, r)
+	}
+	if revenues == nil {
+		revenues = []RevenueRow{}
+	}
+
+	// 각 주문의 items 조회
+	for i, rv := range revenues {
+		itemRows, err := database.DB.Query(`
+			SELECT vendor_item_id, product_name, vendor_item_name, sale_price, quantity,
+				sale_amount, service_fee, service_fee_ratio, settlement_amount, external_seller_sku_code
+			FROM revenue_history_items
+			WHERE user_id = ? AND order_id = ? AND sale_type = ? AND recognition_date = ?
+		`, user.UserID, rv.OrderId, rv.SaleType, rv.RecognitionDate)
+		if err != nil {
+			continue
+		}
+		for itemRows.Next() {
+			var it RevenueItemRow
+			if err := itemRows.Scan(&it.VendorItemId, &it.ProductName, &it.VendorItemName,
+				&it.SalePrice, &it.Quantity, &it.SaleAmount, &it.ServiceFee,
+				&it.ServiceFeeRatio, &it.SettlementAmount, &it.ExternalSellerSkuCode); err != nil {
+				continue
+			}
+			revenues[i].Items = append(revenues[i].Items, it)
+		}
+		itemRows.Close()
+	}
+
+	lastSynced := getLastSyncedAt(user.UserID, "revenue")
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"code":         "SUCCESS",
+		"data":         revenues,
+		"total":        len(revenues),
+		"lastSyncedAt": lastSynced,
+	})
+}
+
+// syncRevenue: 쿠팡 매출내역 API 호출 → revenue_history + revenue_history_items 저장
+func syncRevenue(c echo.Context) error {
+	user := c.Get("user").(*middleware.UserContext)
+	client := coupang.NewClient(user.VendorID, user.AccessKey, user.SecretKey)
+
+	var body struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := c.Bind(&body); err != nil || body.From == "" || body.To == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "from, to 날짜를 입력해주세요 (YYYY-MM-dd)"})
+	}
+
+	records, err := client.GetRevenueHistory(body.From, body.To)
+	if err != nil {
+		c.Logger().Errorf("syncRevenue GetRevenueHistory failed: %v", err)
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "429") {
+			return c.JSON(http.StatusTooManyRequests, map[string]string{"error": "쿠팡 API 요청 한도 초과. 잠시 후 다시 시도해주세요."})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	type DeliveryFee struct {
+		Amount           float64 `json:"amount"`
+		SettlementAmount float64 `json:"settlementAmount"`
+	}
+	type RevenueItemDetail struct {
+		VendorItemId          int64   `json:"vendorItemId"`
+		ProductName           string  `json:"productName"`
+		VendorItemName        string  `json:"vendorItemName"`
+		SalePrice             float64 `json:"salePrice"`
+		Quantity              int     `json:"quantity"`
+		SaleAmount            float64 `json:"saleAmount"`
+		ServiceFee            float64 `json:"serviceFee"`
+		ServiceFeeRatio       float64 `json:"serviceFeeRatio"`
+		SettlementAmount      float64 `json:"settlementAmount"`
+		ExternalSellerSkuCode string  `json:"externalSellerSkuCode"`
+	}
+	type RevenueRecord struct {
+		OrderId             int64             `json:"orderId"`
+		SaleType            string            `json:"saleType"`
+		SaleDate            string            `json:"saleDate"`
+		RecognitionDate     string            `json:"recognitionDate"`
+		SettlementDate      string            `json:"settlementDate"`
+		FinalSettlementDate string            `json:"finalSettlementDate"`
+		DeliveryFee         DeliveryFee       `json:"deliveryFee"`
+		Items               []RevenueItemDetail `json:"items"`
+	}
+
+	count := 0
+	for _, raw := range records {
+		var r RevenueRecord
+		if err := json.Unmarshal(raw, &r); err != nil {
+			continue
+		}
+
+		_, err := database.DB.Exec(`
+			INSERT INTO revenue_history
+				(user_id, order_id, sale_type, sale_date, recognition_date, settlement_date,
+				 final_settlement_date, delivery_fee_amount, delivery_settlement_amount, raw_json, synced_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(user_id, order_id, sale_type, recognition_date) DO UPDATE SET
+				sale_date = excluded.sale_date,
+				settlement_date = excluded.settlement_date,
+				final_settlement_date = excluded.final_settlement_date,
+				delivery_fee_amount = excluded.delivery_fee_amount,
+				delivery_settlement_amount = excluded.delivery_settlement_amount,
+				raw_json = excluded.raw_json,
+				synced_at = CURRENT_TIMESTAMP
+		`, user.UserID, r.OrderId, r.SaleType, r.SaleDate, r.RecognitionDate,
+			r.SettlementDate, r.FinalSettlementDate,
+			r.DeliveryFee.Amount, r.DeliveryFee.SettlementAmount, string(raw))
+		if err != nil {
+			c.Logger().Errorf("revenue_history upsert failed: %v", err)
+			continue
+		}
+
+		// items 저장: 기존 건 삭제 후 재삽입
+		database.DB.Exec(`DELETE FROM revenue_history_items WHERE user_id = ? AND order_id = ? AND sale_type = ? AND recognition_date = ?`,
+			user.UserID, r.OrderId, r.SaleType, r.RecognitionDate)
+		for _, it := range r.Items {
+			database.DB.Exec(`
+				INSERT INTO revenue_history_items
+					(user_id, order_id, sale_type, recognition_date, vendor_item_id, product_name,
+					 vendor_item_name, sale_price, quantity, sale_amount, service_fee,
+					 service_fee_ratio, settlement_amount, external_seller_sku_code)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`, user.UserID, r.OrderId, r.SaleType, r.RecognitionDate,
+				it.VendorItemId, it.ProductName, it.VendorItemName,
+				it.SalePrice, it.Quantity, it.SaleAmount, it.ServiceFee,
+				it.ServiceFeeRatio, it.SettlementAmount, it.ExternalSellerSkuCode)
+		}
+		count++
+	}
+
+	upsertSyncStatus(user.UserID, "revenue", count)
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"code":     "SUCCESS",
+		"count":    count,
+		"syncedAt": time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		"fromDate": body.From,
+		"toDate":   body.To,
 	})
 }
 

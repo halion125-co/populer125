@@ -29,10 +29,11 @@ func Login(cfg *config.Config) echo.HandlerFunc {
 
 		// Find user by email
 		var user models.User
+		var isAdmin int
 		err := database.DB.QueryRow(
-			"SELECT id, email, password, phone, vendor_id, access_key, secret_key, created_at FROM users WHERE email = ?",
+			"SELECT id, email, password, phone, vendor_id, access_key, secret_key, created_at, is_admin FROM users WHERE email = ?",
 			req.Email,
-		).Scan(&user.ID, &user.Email, &user.Password, &user.Phone, &user.VendorID, &user.AccessKey, &user.SecretKey, &user.CreatedAt)
+		).Scan(&user.ID, &user.Email, &user.Password, &user.Phone, &user.VendorID, &user.AccessKey, &user.SecretKey, &user.CreatedAt, &isAdmin)
 		if err == sql.ErrNoRows {
 			return echo.NewHTTPError(http.StatusUnauthorized, "이메일 또는 비밀번호가 올바르지 않습니다")
 		}
@@ -62,6 +63,7 @@ func Login(cfg *config.Config) echo.HandlerFunc {
 				VendorID:  user.VendorID,
 				HasSecret: user.SecretKey != "",
 				CreatedAt: user.CreatedAt,
+				IsAdmin:   isAdmin == 1,
 			},
 		})
 	}

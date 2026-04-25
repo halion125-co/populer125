@@ -1,32 +1,10 @@
 import { useContext } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { AuthContext } from '../contexts/AuthContext';
 import { useNavigate } from '@tanstack/react-router';
-import { apiClient } from '../lib/api';
-import { formatKST } from '../lib/formatters';
-
-interface SyncInfo {
-  dataType: string;
-  lastSyncedAt: string;
-  recordCount: number;
-}
-
-interface SyncStatusResponse {
-  code: string;
-  data: { [key: string]: SyncInfo };
-}
 
 const DashboardPage = () => {
   const auth = useContext(AuthContext);
   const navigate = useNavigate();
-
-  const { data: syncStatus } = useQuery({
-    queryKey: ['syncStatus'],
-    queryFn: async () => {
-      const res = await apiClient.get<SyncStatusResponse>('/api/coupang/sync/status');
-      return res.data.data;
-    },
-  });
 
   const handleLogout = () => {
     auth!.logout();
@@ -41,6 +19,14 @@ const DashboardPage = () => {
           <h1 className="text-2xl font-bold text-blue-600">RocketGrowth Console</h1>
           <div className="flex items-center gap-3">
             <span className="text-gray-600 text-sm">{auth!.user?.email}</span>
+            {auth!.user?.isAdmin && (
+              <button
+                onClick={() => navigate({ to: '/admin' })}
+                className="px-3 py-1.5 text-sm bg-purple-600 text-white rounded hover:bg-purple-700"
+              >
+                관리자
+              </button>
+            )}
             <button
               onClick={() => navigate({ to: '/profile' })}
               className="px-3 py-1.5 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
@@ -63,35 +49,6 @@ const DashboardPage = () => {
           <p className="text-gray-600">쿠팡 판매자 관리 시스템에 로그인되었습니다.</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="text-lg font-semibold text-gray-700 mb-2">상품</h3>
-            <p className="text-3xl font-bold text-blue-600">
-              {syncStatus?.products?.recordCount ?? '-'}
-            </p>
-            <p className="text-xs text-gray-400 mt-2">
-              최종 동기화: {formatKST(syncStatus?.products?.lastSyncedAt ?? '', '동기화 없음')}
-            </p>
-          </div>
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="text-lg font-semibold text-gray-700 mb-2">주문</h3>
-            <p className="text-3xl font-bold text-green-600">
-              {syncStatus?.orders?.recordCount ?? '-'}
-            </p>
-            <p className="text-xs text-gray-400 mt-2">
-              최종 동기화: {formatKST(syncStatus?.orders?.lastSyncedAt ?? '', '동기화 없음')}
-            </p>
-          </div>
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="text-lg font-semibold text-gray-700 mb-2">재고</h3>
-            <p className="text-3xl font-bold text-orange-600">
-              {syncStatus?.inventory?.recordCount ?? '-'}
-            </p>
-            <p className="text-xs text-gray-400 mt-2">
-              최종 동기화: {formatKST(syncStatus?.inventory?.lastSyncedAt ?? '', '동기화 없음')}
-            </p>
-          </div>
-        </div>
 
         <div className="bg-white p-6 rounded-lg shadow">
           <h3 className="text-xl font-bold text-gray-800 mb-4">메인 메뉴</h3>

@@ -313,8 +313,11 @@ func (c *Client) GetRevenueHistory(from, to string) ([]json.RawMessage, error) {
 			}
 			pageIndex++
 
-			query := fmt.Sprintf("vendorId=%s&recognitionDateFrom=%s&recognitionDateTo=%s&token=%s&maxPerPage=50",
-				c.VendorID, fromStr, toStr, token)
+			query := fmt.Sprintf("vendorId=%s&recognitionDateFrom=%s&recognitionDateTo=%s&maxPerPage=50",
+				c.VendorID, fromStr, toStr)
+			if token != "" {
+				query += "&token=" + token
+			}
 
 			body, err := c.requestWithRetry("GET", path, query)
 			if err != nil {

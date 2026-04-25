@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from '@tanstack/react-router';
 import { apiClient } from '../lib/api';
 import { formatKST } from '../lib/formatters';
 import type { ReturnItem, ReturnsResponse } from '../types/returns';
 import { RETURN_STATUSES } from '../types/returns';
 import type { RevenueItem, RevenueResponse } from '../types/revenue';
+import Layout from '../components/Layout';
 
 // ─── 반품 탭 ────────────────────────────────────────────────────
 
@@ -528,21 +528,11 @@ const RevenueTab = () => {
 // ─── 메인 페이지 ─────────────────────────────────────────────────
 
 const ReturnsPage = () => {
-  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'returns' | 'revenue'>('returns');
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <header className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center gap-4">
-          <button onClick={() => navigate({ to: '/' })} className="text-blue-600 hover:text-blue-800 font-medium">
-            &larr; 뒤로
-          </button>
-          <h1 className="text-2xl font-bold text-gray-800">반품 / 정산 관리</h1>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-4 py-8">
+    <Layout>
+      <div>
         {/* 탭 */}
         <div className="mb-6 border-b border-gray-200">
           <nav className="-mb-px flex gap-6">
@@ -570,8 +560,8 @@ const ReturnsPage = () => {
         </div>
 
         {activeTab === 'returns' ? <ReturnsTab /> : <RevenueTab />}
-      </main>
-    </div>
+      </div>
+    </Layout>
   );
 };
 

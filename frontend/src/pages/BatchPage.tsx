@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, Link } from '@tanstack/react-router';
+import { Link } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { formatKST } from '../lib/formatters';
+import Layout from '../components/Layout';
 
 interface BatchLog {
   id: number;
@@ -31,7 +32,6 @@ const statusBadge = (status: string) => {
 };
 
 export default function BatchPage() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selectedJobType, setSelectedJobType] = useState<string>('');
   const [runningJobs, setRunningJobs] = useState<Set<string>>(new Set());
@@ -85,20 +85,15 @@ export default function BatchPage() {
   }, [logs]);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* 헤더 */}
-      <div className="bg-white border-b px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate({ to: '/' })} className="text-gray-400 hover:text-gray-600 text-sm">← 홈</button>
+    <Layout>
+      <div className="max-w-4xl mx-auto space-y-6">
+        <div className="flex items-center justify-between">
           <h1 className="text-lg font-bold text-gray-800">배치 관리</h1>
+          <div className="flex items-center gap-3">
+            <Link to="/fcm-monitor" className="px-3 py-1.5 text-xs bg-orange-500 text-white rounded hover:bg-orange-600">🔔 FCM 모니터링</Link>
+            <p className="text-xs text-gray-400">매일 KST 00:00 자동 실행 (전일자 데이터)</p>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <Link to="/fcm-monitor" className="px-3 py-1.5 text-xs bg-orange-500 text-white rounded hover:bg-orange-600">🔔 FCM 모니터링</Link>
-          <p className="text-xs text-gray-400">매일 KST 00:00 자동 실행 (전일자 데이터)</p>
-        </div>
-      </div>
-
-      <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
 
         {/* 배치 작업 */}
         <div className="bg-white rounded-lg shadow-sm border">
@@ -209,6 +204,6 @@ export default function BatchPage() {
           )}
         </div>
       </div>
-    </div>
+    </Layout>
   );
 }

@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { formatKST } from '../lib/formatters';
+import Layout from '../components/Layout';
 
 interface UserFCM {
   user_id: number;
@@ -31,7 +31,6 @@ function formatAmount(v: number) {
 }
 
 export default function FCMMonitorPage() {
-  const navigate = useNavigate();
   const [tab, setTab] = useState<'status' | 'history'>('status');
 
   const { data, isLoading, dataUpdatedAt, refetch, isFetching } = useQuery({
@@ -49,13 +48,9 @@ export default function FCMMonitorPage() {
   const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString('ko-KR') : '-';
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* 헤더 */}
-      <div className="bg-white border-b px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate({ to: '/batch' })} className="text-gray-400 hover:text-gray-600 text-sm">← 배치 관리</button>
-          <h1 className="text-lg font-bold text-gray-800">🔔 FCM 푸시 모니터링</h1>
-        </div>
+    <Layout>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-lg font-bold text-gray-800">🔔 FCM 푸시 모니터링</h1>
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-400">마지막 갱신: {lastUpdated} · 1분마다 자동 갱신</span>
           <button
@@ -247,6 +242,6 @@ export default function FCMMonitorPage() {
           </div>
         )}
       </div>
-    </div>
+    </Layout>
   );
 }

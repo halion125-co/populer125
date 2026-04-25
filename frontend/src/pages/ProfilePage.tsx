@@ -2,8 +2,9 @@ import { useState, useContext, useEffect, useCallback } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { AuthContext } from '../contexts/AuthContext';
 import { apiClient } from '../lib/api';
+import Layout from '../components/Layout';
 
-type Tab = 'basic' | 'coupang' | 'security' | 'slack';
+type Tab = 'basic' | 'coupang' | 'security' | 'notification';
 
 interface SlackWebhook {
   id: number;
@@ -75,6 +76,12 @@ const ProfilePage = () => {
   const [pollingInterval, setPollingInterval] = useState(10);
   const [pollingIntervalSaving, setPollingIntervalSaving] = useState(false);
 
+  const [pushEnabled, setPushEnabled] = useState(true);
+  const [quietEnabled, setQuietEnabled] = useState(false);
+  const [quietStart, setQuietStart] = useState('22:00');
+  const [quietEnd, setQuietEnd] = useState('08:00');
+  const [notifSaving, setNotifSaving] = useState(false);
+
   useEffect(() => {
     if (auth?.user) {
       setBasicForm({
@@ -145,12 +152,43 @@ const ProfilePage = () => {
     }
   }, []);
 
+  const fetchNotifSettings = useCallback(async () => {
+    try {
+      const res = await apiClient.get<{ push_enabled: boolean; quiet_start: string; quiet_end: string }>('/api/notifications/settings');
+      setPushEnabled(res.data.push_enabled);
+      const qs = res.data.quiet_start || '';
+      const qe = res.data.quiet_end || '';
+      setQuietEnabled(!!qs && !!qe);
+      setQuietStart(qs || '22:00');
+      setQuietEnd(qe || '08:00');
+    } catch {
+      // ignore
+    }
+  }, []);
+
   useEffect(() => {
-    if (activeTab === 'slack') {
+    if (activeTab === 'notification') {
       fetchWebhooks();
       fetchSlackSettings();
+      fetchNotifSettings();
     }
-  }, [activeTab, fetchWebhooks, fetchSlackSettings]);
+  }, [activeTab, fetchWebhooks, fetchSlackSettings, fetchNotifSettings]);
+
+  const handleNotifSave = async () => {
+    setNotifSaving(true);
+    try {
+      await apiClient.put('/api/notifications/settings', {
+        push_enabled: pushEnabled,
+        quiet_start: quietEnabled ? quietStart : '',
+        quiet_end: quietEnabled ? quietEnd : '',
+      });
+      showMsg('success', '알림 설정이 저장되었습니다.');
+    } catch {
+      showMsg('error', '저장에 실패했습니다.');
+    } finally {
+      setNotifSaving(false);
+    }
+  };
 
   const handlePollingIntervalSave = async () => {
     setPollingIntervalSaving(true);
@@ -296,25 +334,15 @@ const ProfilePage = () => {
     { key: 'basic', label: '기본 정보' },
     { key: 'coupang', label: '쿠팡 API' },
     { key: 'security', label: '보안' },
-    { key: 'slack', label: '슬랙 알림' },
+    { key: 'notification', label: '주문 알림' },
   ];
 
   const inputClass = 'w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm';
   const labelClass = 'block text-sm font-medium text-gray-700 mb-1';
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      {/* Header */}
-      <header className="bg-white shadow">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center gap-4">
-          <button onClick={() => navigate({ to: '/' })} className="text-blue-600 hover:text-blue-800 font-medium">
-            &larr; 뒤로
-          </button>
-          <h1 className="text-xl font-bold text-gray-800">개인정보 관리</h1>
-        </div>
-      </header>
-
-      <main className="max-w-4xl mx-auto px-4 py-8">
+    <Layout>
+      <div className="max-w-4xl mx-auto">
         {/* User summary */}
         <div className="bg-white rounded-lg shadow p-5 mb-6 flex items-center gap-4">
           <div className="w-14 h-14 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 text-xl font-bold">
@@ -565,18 +593,14 @@ const ProfilePage = () => {
               </div>
             )}
 
-            {/* 슬랙 알림 탭 */}
-            {activeTab === 'slack' && (
+            {/* 주문 알림 탭 */}
+            {activeTab === 'notification' && (
               <div className="space-y-5 max-w-lg">
-                <p className="text-sm text-gray-500">
-                  슬랙 Incoming Webhook URL을 등록하면 주문 폴링 시 해당 채널로 알림이 발송됩니다.
-                  2개 이상 등록 시 모두 발송됩니다.
-                </p>
 
-                {/* 폴링 간격 설정 */}
+                {/* 섹션 1: 주문 폴링 간격 */}
                 <div className="border border-gray-200 rounded-md p-4 space-y-3 bg-gray-50">
-                  <h4 className="text-sm font-medium text-gray-700">폴링 간격</h4>
-                  <p className="text-xs text-gray-400">설정한 간격마다 쿠팡 API를 호출하여 신규 주문을 확인합니다.</p>
+                  <h4 className="text-sm font-medium text-gray-700">주문 폴링 간격</h4>
+                  <p className="text-xs text-gray-400">설정한 간격마다 쿠팡 API를 호출하여 신규 주문을 확인합니다. 슬랙·앱 푸시 모두 이 간격에 따라 발송됩니다.</p>
                   <div className="flex flex-wrap gap-2">
                     {[5, 10, 20, 30, 60].map(min => (
                       <button
@@ -601,65 +625,136 @@ const ProfilePage = () => {
                   </button>
                 </div>
 
-                {/* 웹훅 목록 */}
-                {webhooks.length > 0 ? (
-                  <div className="divide-y divide-gray-100 border border-gray-200 rounded-md overflow-hidden">
-                    {webhooks.map(w => (
-                      <div key={w.id} className="flex items-center gap-3 px-4 py-3 bg-white">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-800 truncate">{w.name || '(이름 없음)'}</p>
-                          <p className="text-xs text-gray-400 truncate">{w.webhookUrl.slice(0, 55)}{w.webhookUrl.length > 55 ? '...' : ''}</p>
-                        </div>
-                        <button
-                          onClick={() => handleWebhookToggle(w)}
-                          className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full transition-colors ${w.enabled ? 'bg-blue-500' : 'bg-gray-300'}`}
-                        >
-                          <span className={`inline-block h-4 w-4 mt-0.5 rounded-full bg-white shadow transition-transform ${w.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                        </button>
-                        <button
-                          onClick={() => handleWebhookDelete(w.id)}
-                          className="text-red-400 hover:text-red-600 text-sm px-2"
-                        >
-                          삭제
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-400">등록된 웹훅이 없습니다.</p>
-                )}
+                {/* 섹션 2: 앱 푸시 알림 */}
+                <div className="border border-gray-200 rounded-md p-4 space-y-4 bg-gray-50">
+                  <h4 className="text-sm font-medium text-gray-700">앱 푸시 알림</h4>
+                  <p className="text-xs text-gray-400">신규 주문 발생 시 모바일 앱으로 알림을 받습니다. 모바일 앱 설정과 동기화됩니다.</p>
 
-                {/* 추가 폼 */}
-                <div className="border border-gray-200 rounded-md p-4 space-y-3 bg-gray-50">
-                  <h4 className="text-sm font-medium text-gray-700">웹훅 추가</h4>
-                  <div>
-                    <label className={labelClass}>이름 (예: 로컬, NAS운영)</label>
-                    <input
-                      type="text"
-                      value={webhookForm.name}
-                      onChange={e => setWebhookForm(f => ({ ...f, name: e.target.value }))}
-                      className={inputClass}
-                      placeholder="채널 식별용 이름"
-                    />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-700">푸시 알림</p>
+                      <p className="text-xs text-gray-400">새 주문 시 앱 알림 전송</p>
+                    </div>
+                    <button
+                      onClick={() => setPushEnabled(v => !v)}
+                      className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors ${pushEnabled ? 'bg-blue-500' : 'bg-gray-300'}`}
+                    >
+                      <span className={`inline-block h-5 w-5 mt-0.5 rounded-full bg-white shadow transition-transform ${pushEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    </button>
                   </div>
-                  <div>
-                    <label className={labelClass}>Webhook URL</label>
-                    <input
-                      type="text"
-                      value={webhookForm.webhookUrl}
-                      onChange={e => setWebhookForm(f => ({ ...f, webhookUrl: e.target.value }))}
-                      className={inputClass}
-                      placeholder="https://hooks.slack.com/services/..."
-                    />
+
+                  <div className={`flex items-center justify-between ${!pushEnabled ? 'opacity-40 pointer-events-none' : ''}`}>
+                    <div>
+                      <p className="text-sm text-gray-700">방해 금지</p>
+                      <p className="text-xs text-gray-400">설정 시간에는 푸시를 전송하지 않습니다</p>
+                    </div>
+                    <button
+                      onClick={() => setQuietEnabled(v => !v)}
+                      disabled={!pushEnabled}
+                      className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors ${quietEnabled ? 'bg-blue-500' : 'bg-gray-300'}`}
+                    >
+                      <span className={`inline-block h-5 w-5 mt-0.5 rounded-full bg-white shadow transition-transform ${quietEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    </button>
                   </div>
+
+                  {quietEnabled && pushEnabled && (
+                    <div className="flex items-center gap-3 pl-1">
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-500">시작</label>
+                        <input
+                          type="time"
+                          value={quietStart}
+                          onChange={e => setQuietStart(e.target.value)}
+                          className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <span className="text-gray-400 text-sm">~</span>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-500">종료</label>
+                        <input
+                          type="time"
+                          value={quietEnd}
+                          onChange={e => setQuietEnd(e.target.value)}
+                          className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   <button
-                    onClick={handleWebhookAdd}
-                    disabled={webhookSaving || !webhookForm.webhookUrl}
+                    onClick={handleNotifSave}
+                    disabled={notifSaving}
                     className="px-5 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-400 font-medium text-sm"
                   >
-                    {webhookSaving ? '저장 중...' : '추가'}
+                    {notifSaving ? '저장 중...' : '저장'}
                   </button>
                 </div>
+
+                {/* 섹션 3: 슬랙 알림 */}
+                <div className="border border-gray-200 rounded-md p-4 space-y-3 bg-gray-50">
+                  <h4 className="text-sm font-medium text-gray-700">슬랙 알림</h4>
+                  <p className="text-xs text-gray-400">Slack Incoming Webhook URL을 등록하면 신규 주문 발생 시 해당 채널로 알림이 발송됩니다. 2개 이상 등록 시 모두 발송됩니다.</p>
+
+                  {/* 웹훅 목록 */}
+                  {webhooks.length > 0 ? (
+                    <div className="divide-y divide-gray-100 border border-gray-200 rounded-md overflow-hidden">
+                      {webhooks.map(w => (
+                        <div key={w.id} className="flex items-center gap-3 px-4 py-3 bg-white">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-800 truncate">{w.name || '(이름 없음)'}</p>
+                            <p className="text-xs text-gray-400 truncate">{w.webhookUrl.slice(0, 55)}{w.webhookUrl.length > 55 ? '...' : ''}</p>
+                          </div>
+                          <button
+                            onClick={() => handleWebhookToggle(w)}
+                            className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full transition-colors ${w.enabled ? 'bg-blue-500' : 'bg-gray-300'}`}
+                          >
+                            <span className={`inline-block h-4 w-4 mt-0.5 rounded-full bg-white shadow transition-transform ${w.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                          </button>
+                          <button
+                            onClick={() => handleWebhookDelete(w.id)}
+                            className="text-red-400 hover:text-red-600 text-sm px-2"
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-400">등록된 웹훅이 없습니다.</p>
+                  )}
+
+                  {/* 추가 폼 */}
+                  <div className="space-y-3 pt-2">
+                    <div>
+                      <label className={labelClass}>이름 (예: 로컬, NAS운영)</label>
+                      <input
+                        type="text"
+                        value={webhookForm.name}
+                        onChange={e => setWebhookForm(f => ({ ...f, name: e.target.value }))}
+                        className={inputClass}
+                        placeholder="채널 식별용 이름"
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Webhook URL</label>
+                      <input
+                        type="text"
+                        value={webhookForm.webhookUrl}
+                        onChange={e => setWebhookForm(f => ({ ...f, webhookUrl: e.target.value }))}
+                        className={inputClass}
+                        placeholder="https://hooks.slack.com/services/..."
+                      />
+                    </div>
+                    <button
+                      onClick={handleWebhookAdd}
+                      disabled={webhookSaving || !webhookForm.webhookUrl}
+                      className="px-5 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-400 font-medium text-sm"
+                    >
+                      {webhookSaving ? '저장 중...' : '추가'}
+                    </button>
+                  </div>
+                </div>
+
               </div>
             )}
 
@@ -737,8 +832,8 @@ const ProfilePage = () => {
             로그아웃
           </button>
         </div>
-      </main>
-    </div>
+      </div>
+    </Layout>
   );
 };
 

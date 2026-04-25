@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from '@tanstack/react-router';
 import { apiClient } from '../lib/api';
 import { formatKST } from '../lib/formatters';
 import type { InventoryItem, InventoryResponse } from '../types/inventory';
+import Layout from '../components/Layout';
 
 const PAGE_SIZE = 20;
 
@@ -36,7 +36,6 @@ interface AlertItem {
 }
 
 const InventoryPage = () => {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
@@ -107,25 +106,21 @@ const InventoryPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      {/* 헤더 */}
-      <header className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button onClick={() => navigate({ to: '/' })} className="text-blue-600 hover:text-blue-800 font-medium">&larr; 뒤로</button>
-            <h1 className="text-2xl font-bold text-gray-800">재고 관리</h1>
-            {lastSyncedAt && <span className="text-xs text-gray-400">마지막 동기화: {formatKST(lastSyncedAt)}</span>}
-          </div>
-          <button
-            onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isPending}
-            className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm disabled:opacity-60 flex items-center gap-2"
-          >
-            {syncMutation.isPending && <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
-            {syncMutation.isPending ? '동기화 중...' : '동기화'}
-          </button>
+    <Layout>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-4">
+          <h1 className="text-2xl font-bold text-gray-800">재고 관리</h1>
+          {lastSyncedAt && <span className="text-xs text-gray-400">마지막 동기화: {formatKST(lastSyncedAt)}</span>}
         </div>
-      </header>
+        <button
+          onClick={() => syncMutation.mutate()}
+          disabled={syncMutation.isPending}
+          className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm disabled:opacity-60 flex items-center gap-2"
+        >
+          {syncMutation.isPending && <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
+          {syncMutation.isPending ? '동기화 중...' : '동기화'}
+        </button>
+      </div>
 
       {error && (
         <div className="max-w-7xl mx-auto px-4 pt-4">
@@ -136,7 +131,7 @@ const InventoryPage = () => {
         </div>
       )}
 
-      <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      <div className="space-y-6">
 
         {/* 전체 통계 */}
         <div className="grid grid-cols-3 gap-4">
@@ -324,8 +319,8 @@ const InventoryPage = () => {
             </div>
           </div>
         )}
-      </main>
-    </div>
+      </div>
+    </Layout>
   );
 };
 

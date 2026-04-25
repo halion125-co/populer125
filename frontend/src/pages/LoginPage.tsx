@@ -40,7 +40,7 @@ const LoginPage = () => {
       if (user?.isTempPassword) {
         navigate({ to: '/profile', search: { tab: 'security' } });
       } else {
-        navigate({ to: '/' });
+        navigate({ to: '/orders' });
       }
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { message?: string } } };

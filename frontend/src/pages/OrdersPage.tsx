@@ -1,10 +1,10 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from '@tanstack/react-router';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, type BarShapeProps } from 'recharts';
 import { apiClient } from '../lib/api';
 import { formatKST } from '../lib/formatters';
 import type { Order, OrdersResponse } from '../types/order';
+import Layout from '../components/Layout';
 
 interface Filters {
   productNames: string[];
@@ -97,7 +97,6 @@ const getDefaultRange = () => {
 };
 
 const OrdersPage = () => {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [showFilters, setShowFilters] = useState(false);
@@ -417,42 +416,50 @@ const OrdersPage = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="text-center">
-          <div className="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-          <p className="text-gray-600">주문 목록을 불러오는 중...</p>
+      <Layout>
+        <div className="flex items-center justify-center py-24">
+          <div className="text-center">
+            <div className="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+            <p className="text-gray-600">주문 목록을 불러오는 중...</p>
+          </div>
         </div>
-      </div>
+      </Layout>
     );
   }
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-100">
-        <Header onBack={() => navigate({ to: '/' })} onSync={() => syncMutation.mutate({ force: false })} isSyncing={syncMutation.isPending} lastSyncedAt={lastSyncedAt} syncDateRange={dateInput} isMobile={isMobile} />
-        <main className="max-w-7xl mx-auto px-4 py-8">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
-            <p className="text-red-600 font-medium mb-2">주문 목록을 불러올 수 없습니다</p>
-            <p className="text-red-500 text-sm mb-4">{(error as Error).message}</p>
-            <button onClick={() => refetch()} className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">
-              다시 시도
-            </button>
-          </div>
-        </main>
-      </div>
+      <Layout>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
+          <p className="text-red-600 font-medium mb-2">주문 목록을 불러올 수 없습니다</p>
+          <p className="text-red-500 text-sm mb-4">{(error as Error).message}</p>
+          <button onClick={() => refetch()} className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">
+            다시 시도
+          </button>
+        </div>
+      </Layout>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <Header
-        onBack={() => navigate({ to: '/' })}
-        onSync={() => { setSyncMessage(null); syncMutation.mutate({ force: false }); }}
-        isSyncing={syncMutation.isPending}
-        lastSyncedAt={lastSyncedAt}
-        syncDateRange={dateInput}
-        isMobile={isMobile}
-      />
+    <Layout>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-bold text-gray-800">주문 관리</h1>
+          {lastSyncedAt && <span className="text-xs text-gray-400">마지막 동기화: {formatKST(lastSyncedAt)}</span>}
+        </div>
+        <div className="flex items-center gap-3">
+          {!isMobile && <span className="text-xs text-gray-400">동기화 범위: {dateInput.from} ~ {dateInput.to}</span>}
+          <button
+            onClick={() => { setSyncMessage(null); syncMutation.mutate({ force: false }); }}
+            disabled={syncMutation.isPending}
+            className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm disabled:opacity-60 flex items-center gap-2"
+          >
+            {syncMutation.isPending && <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
+            {syncMutation.isPending ? '동기화 중...' : '동기화'}
+          </button>
+        </div>
+      </div>
 
       {/* 중복 기간 확인 다이얼로그 */}
       {overlapDialog && (
@@ -506,7 +513,7 @@ const OrdersPage = () => {
         </div>
       )}
 
-      <main className="max-w-7xl mx-auto px-4 py-4 md:py-8">
+      <div>
         {/* Date Range Selector */}
         <div className="mb-6 bg-white p-4 rounded-lg shadow">
           {/* 모바일 레이아웃 */}
@@ -779,83 +786,10 @@ const OrdersPage = () => {
             </div>
           </>
         )}
-      </main>
-    </div>
+      </div>
+    </Layout>
   );
 };
-
-function Header({
-  onBack,
-  onSync,
-  isSyncing,
-  lastSyncedAt,
-  syncDateRange,
-  isMobile,
-}: {
-  onBack: () => void;
-  onSync: () => void;
-  isSyncing: boolean;
-  lastSyncedAt: string;
-  syncDateRange: { from: string; to: string };
-  isMobile: boolean;
-}) {
-  if (isMobile) {
-    return (
-      <header className="bg-white shadow">
-        <div className="px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button onClick={onBack} className="text-blue-600 hover:text-blue-800 font-medium text-sm">
-              &larr; 뒤로
-            </button>
-            <h1 className="text-lg font-bold text-gray-800">주문 관리</h1>
-          </div>
-          <button
-            onClick={onSync}
-            disabled={isSyncing}
-            className="px-3 py-1.5 bg-green-500 text-white rounded hover:bg-green-600 text-sm disabled:opacity-60 flex items-center gap-1.5"
-          >
-            {isSyncing && <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
-            {isSyncing ? '동기화 중...' : '동기화'}
-          </button>
-        </div>
-        {lastSyncedAt && (
-          <div className="px-4 pb-2 text-xs text-gray-400">
-            마지막 동기화: {formatKST(lastSyncedAt)}
-          </div>
-        )}
-      </header>
-    );
-  }
-
-  return (
-    <header className="bg-white shadow">
-      <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <button onClick={onBack} className="text-blue-600 hover:text-blue-800 font-medium">
-            &larr; 뒤로
-          </button>
-          <h1 className="text-2xl font-bold text-gray-800">주문 관리</h1>
-          {lastSyncedAt && (
-            <span className="text-xs text-gray-400">마지막 동기화: {formatKST(lastSyncedAt)}</span>
-          )}
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-gray-400">
-            동기화 범위: {syncDateRange.from} ~ {syncDateRange.to}
-          </span>
-          <button
-            onClick={onSync}
-            disabled={isSyncing}
-            className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm disabled:opacity-60 flex items-center gap-2"
-          >
-            {isSyncing && <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
-            {isSyncing ? '동기화 중...' : '동기화'}
-          </button>
-        </div>
-      </div>
-    </header>
-  );
-}
 
 const formatPrice = (price: number | undefined) => {
   if (price === undefined || price === null) return '-';

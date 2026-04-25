@@ -17,8 +17,4 @@ jobs:
       - name: Deploy locally on NAS
         run: |
           echo "🚀 Deploying on NAS..."
-          cd /volume2/docker/populer125
-          git fetch origin
-          git reset --hard origin/main
-          git clean -fd -e .env
-          docker-compose -f docker-compose.prod.yml up -d --build
+          docker-compose -f docker-compose.prod.yml --env-file .env.prod up -d --build

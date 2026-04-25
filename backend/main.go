@@ -322,16 +322,17 @@ func getInventoryFromDB(c echo.Context) error {
 	alertType    := c.QueryParam("alertType")     // "new" | "out_of_stock" | "" (전체)
 
 	type InventoryItem struct {
-		VendorItemID    int64  `json:"vendorItemId"`
-		ProductName     string `json:"productName"`
-		ItemName        string `json:"itemName"`
-		StatusName      string `json:"statusName"`
-		StockQuantity   int    `json:"stockQuantity"`
-		SalesLast30Days int    `json:"salesLast30Days"`
-		IsMapped        bool   `json:"isMapped"`
-		SyncedAt        string `json:"syncedAt"`
-		CreatedAt       string `json:"createdAt"`
-		OutOfStockAt    string `json:"outOfStockAt"`
+		VendorItemID      int64  `json:"vendorItemId"`
+		ExternalVendorSku string `json:"externalVendorSku"`
+		ProductName       string `json:"productName"`
+		ItemName          string `json:"itemName"`
+		StatusName        string `json:"statusName"`
+		StockQuantity     int    `json:"stockQuantity"`
+		SalesLast30Days   int    `json:"salesLast30Days"`
+		IsMapped          bool   `json:"isMapped"`
+		SyncedAt          string `json:"syncedAt"`
+		CreatedAt         string `json:"createdAt"`
+		OutOfStockAt      string `json:"outOfStockAt"`
 	}
 
 	// 전체 통계 (필터 무관, 전체 기준)
@@ -398,13 +399,14 @@ func getInventoryFromDB(c echo.Context) error {
 	// 데이터 조회
 	queryArgs := append(args, alertType, alertType, pageSize, (page-1)*pageSize)
 	rows, err := database.DB.Query(`
-		SELECT i.vendor_item_id,
+		SELECT i.vendor_item_id, COALESCE(pi.external_vendor_sku, '') AS external_vendor_sku,
 		       COALESCE(NULLIF(i.product_name,''), p.seller_product_name, '') AS product_name,
 		       i.item_name, i.status_name,
 		       i.stock_quantity, i.sales_last_30_days, i.is_mapped, i.synced_at,
 		       COALESCE(i.created_at, i.synced_at), COALESCE(i.out_of_stock_at, '')
 		FROM inventory i
 		LEFT JOIN products p ON p.user_id = i.user_id AND p.seller_product_id = i.seller_product_id
+		LEFT JOIN product_items pi ON pi.user_id = i.user_id AND pi.vendor_item_id = i.vendor_item_id
 		`+where+`
 		ORDER BY CASE WHEN ? = 'new' THEN COALESCE(i.created_at, i.synced_at)
 		              WHEN ? = 'out_of_stock' THEN i.out_of_stock_at
@@ -421,7 +423,7 @@ func getInventoryFromDB(c echo.Context) error {
 	for rows.Next() {
 		var it InventoryItem
 		var isMapped int
-		if err := rows.Scan(&it.VendorItemID, &it.ProductName, &it.ItemName,
+		if err := rows.Scan(&it.VendorItemID, &it.ExternalVendorSku, &it.ProductName, &it.ItemName,
 			&it.StatusName, &it.StockQuantity, &it.SalesLast30Days,
 			&isMapped, &it.SyncedAt, &it.CreatedAt, &it.OutOfStockAt); err != nil {
 			continue

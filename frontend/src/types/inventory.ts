@@ -1,5 +1,6 @@
 export interface InventoryItem {
   vendorItemId: number;
+  externalVendorSku: string;
   productName: string;
   itemName: string;
   statusName: string;

@@ -265,6 +265,7 @@ const InventoryPage = () => {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">옵션ID</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">상품명</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">옵션명</th>
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">재고수량</th>
@@ -329,6 +330,7 @@ function InventoryItemRow({ item }: { item: InventoryItem }) {
   return (
     <tr className="hover:bg-gray-50">
       <td className="px-4 py-3 text-sm text-gray-500 font-mono whitespace-nowrap">{item.vendorItemId}</td>
+      <td className="px-4 py-3 text-sm text-gray-500 font-mono whitespace-nowrap">{item.externalVendorSku || '-'}</td>
       <td className="px-4 py-3 text-sm text-gray-900">
         {item.productName ? <div className="max-w-xs truncate">{item.productName}</div> : <span className="text-gray-400 italic">-</span>}
       </td>

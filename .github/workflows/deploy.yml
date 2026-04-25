@@ -15,9 +15,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Deploy locally on NAS
+        env:
+          ENV_PROD: ${{ secrets.ENV_PROD }}
         run: |
           echo "🚀 Deploying on NAS..."
-          echo "Runner workspace: $GITHUB_WORKSPACE"
-          echo "Current dir: $(pwd)"
-          find / -name ".env.prod" 2>/dev/null | head -20
-          find / -name "docker-compose.prod.yml" 2>/dev/null | head -20
+          echo "$ENV_PROD" > .env.prod
+          docker-compose -f docker-compose.prod.yml up -d --build
+          docker-compose -f docker-compose.prod.yml ps

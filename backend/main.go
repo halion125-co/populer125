@@ -61,6 +61,7 @@ func main() {
 	e.POST("/api/auth/login", handlers.Login(cfg))
 	e.POST("/api/auth/register", handlers.Register(cfg))
 	e.POST("/api/auth/refresh", handlers.RefreshToken(cfg))
+	e.POST("/api/auth/forgot-password", handlers.ForgotPassword(cfg))
 	e.GET("/api/health", healthCheck)
 
 	// Protected routes

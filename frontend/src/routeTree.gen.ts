@@ -10,12 +10,14 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ReturnsRouteImport } from './routes/returns'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as ProductsRouteImport } from './routes/products'
 import { Route as OrdersRouteImport } from './routes/orders'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as InventoryRouteImport } from './routes/inventory'
+import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as FcmMonitorRouteImport } from './routes/fcm-monitor'
 import { Route as BatchRouteImport } from './routes/batch'
 import { Route as AdminRouteImport } from './routes/admin'
@@ -24,6 +26,11 @@ import { Route as IndexRouteImport } from './routes/index'
 const ReturnsRoute = ReturnsRouteImport.update({
   id: '/returns',
   path: '/returns',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RegisterRoute = RegisterRouteImport.update({
@@ -56,6 +63,11 @@ const InventoryRoute = InventoryRouteImport.update({
   path: '/inventory',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const FcmMonitorRoute = FcmMonitorRouteImport.update({
   id: '/fcm-monitor',
   path: '/fcm-monitor',
@@ -82,12 +94,14 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRoute
   '/batch': typeof BatchRoute
   '/fcm-monitor': typeof FcmMonitorRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/inventory': typeof InventoryRoute
   '/login': typeof LoginRoute
   '/orders': typeof OrdersRoute
   '/products': typeof ProductsRoute
   '/profile': typeof ProfileRoute
   '/register': typeof RegisterRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/returns': typeof ReturnsRoute
 }
 export interface FileRoutesByTo {
@@ -95,12 +109,14 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminRoute
   '/batch': typeof BatchRoute
   '/fcm-monitor': typeof FcmMonitorRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/inventory': typeof InventoryRoute
   '/login': typeof LoginRoute
   '/orders': typeof OrdersRoute
   '/products': typeof ProductsRoute
   '/profile': typeof ProfileRoute
   '/register': typeof RegisterRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/returns': typeof ReturnsRoute
 }
 export interface FileRoutesById {
@@ -109,12 +125,14 @@ export interface FileRoutesById {
   '/admin': typeof AdminRoute
   '/batch': typeof BatchRoute
   '/fcm-monitor': typeof FcmMonitorRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/inventory': typeof InventoryRoute
   '/login': typeof LoginRoute
   '/orders': typeof OrdersRoute
   '/products': typeof ProductsRoute
   '/profile': typeof ProfileRoute
   '/register': typeof RegisterRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/returns': typeof ReturnsRoute
 }
 export interface FileRouteTypes {
@@ -124,12 +142,14 @@ export interface FileRouteTypes {
     | '/admin'
     | '/batch'
     | '/fcm-monitor'
+    | '/forgot-password'
     | '/inventory'
     | '/login'
     | '/orders'
     | '/products'
     | '/profile'
     | '/register'
+    | '/reset-password'
     | '/returns'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -137,12 +157,14 @@ export interface FileRouteTypes {
     | '/admin'
     | '/batch'
     | '/fcm-monitor'
+    | '/forgot-password'
     | '/inventory'
     | '/login'
     | '/orders'
     | '/products'
     | '/profile'
     | '/register'
+    | '/reset-password'
     | '/returns'
   id:
     | '__root__'
@@ -150,12 +172,14 @@ export interface FileRouteTypes {
     | '/admin'
     | '/batch'
     | '/fcm-monitor'
+    | '/forgot-password'
     | '/inventory'
     | '/login'
     | '/orders'
     | '/products'
     | '/profile'
     | '/register'
+    | '/reset-password'
     | '/returns'
   fileRoutesById: FileRoutesById
 }
@@ -164,12 +188,14 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRoute
   BatchRoute: typeof BatchRoute
   FcmMonitorRoute: typeof FcmMonitorRoute
+  ForgotPasswordRoute: typeof ForgotPasswordRoute
   InventoryRoute: typeof InventoryRoute
   LoginRoute: typeof LoginRoute
   OrdersRoute: typeof OrdersRoute
   ProductsRoute: typeof ProductsRoute
   ProfileRoute: typeof ProfileRoute
   RegisterRoute: typeof RegisterRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
   ReturnsRoute: typeof ReturnsRoute
 }
 
@@ -180,6 +206,13 @@ declare module '@tanstack/react-router' {
       path: '/returns'
       fullPath: '/returns'
       preLoaderRoute: typeof ReturnsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/register': {
@@ -224,6 +257,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InventoryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/forgot-password': {
+      id: '/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/forgot-password'
+      preLoaderRoute: typeof ForgotPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/fcm-monitor': {
       id: '/fcm-monitor'
       path: '/fcm-monitor'
@@ -260,12 +300,14 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRoute,
   BatchRoute: BatchRoute,
   FcmMonitorRoute: FcmMonitorRoute,
+  ForgotPasswordRoute: ForgotPasswordRoute,
   InventoryRoute: InventoryRoute,
   LoginRoute: LoginRoute,
   OrdersRoute: OrdersRoute,
   ProductsRoute: ProductsRoute,
   ProfileRoute: ProfileRoute,
   RegisterRoute: RegisterRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
   ReturnsRoute: ReturnsRoute,
 }
 export const routeTree = rootRouteImport

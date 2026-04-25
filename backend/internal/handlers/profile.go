@@ -18,11 +18,12 @@ func GetProfile(c echo.Context) error {
 
 	var profile models.UserProfile
 	var secretKey string
+	var isAdmin, isTempPassword int
 	err := database.DB.QueryRow(
 		`SELECT id, email, phone, vendor_id, access_key, secret_key,
 		        name_ko, name_en, zipcode, address_ko, address_detail_ko,
 		        address_en, address_detail_en, customs_type, customs_number,
-		        created_at
+		        created_at, is_admin, is_temp_password
 		 FROM users WHERE id = ?`,
 		user.UserID,
 	).Scan(
@@ -31,7 +32,7 @@ func GetProfile(c echo.Context) error {
 		&profile.AddressKo, &profile.AddressDetailKo,
 		&profile.AddressEn, &profile.AddressDetailEn,
 		&profile.CustomsType, &profile.CustomsNumber,
-		&profile.CreatedAt,
+		&profile.CreatedAt, &isAdmin, &isTempPassword,
 	)
 	if err == sql.ErrNoRows {
 		return echo.NewHTTPError(http.StatusNotFound, "사용자를 찾을 수 없습니다")
@@ -40,6 +41,8 @@ func GetProfile(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "서버 오류가 발생했습니다")
 	}
 	profile.HasSecret = secretKey != ""
+	profile.IsAdmin = isAdmin == 1
+	profile.IsTempPassword = isTempPassword == 1
 
 	return c.JSON(http.StatusOK, profile)
 }
@@ -147,7 +150,7 @@ func ChangePassword(c echo.Context) error {
 	}
 
 	_, err = database.DB.Exec(
-		"UPDATE users SET password=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+		"UPDATE users SET password=?, is_temp_password=0, updated_at=CURRENT_TIMESTAMP WHERE id=?",
 		string(newHashed), user.UserID,
 	)
 	if err != nil {

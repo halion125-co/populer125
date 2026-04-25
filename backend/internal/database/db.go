@@ -375,6 +375,10 @@ func createTables() error {
 			FOREIGN KEY (user_id) REFERENCES users(id)
 		);
 	`)
+	if err != nil {
+		return err
+	}
+
 	return err
 }
 
@@ -437,6 +441,7 @@ func migrateUsers() error {
 		{"customs_number", "TEXT DEFAULT ''"},
 		{"polling_interval_min", "INTEGER DEFAULT 10"},
 		{"is_admin", "INTEGER DEFAULT 0"},
+		{"is_temp_password", "INTEGER DEFAULT 0"},
 	}
 	for _, col := range cols {
 		DB.Exec("ALTER TABLE users ADD COLUMN " + col.name + " " + col.def)

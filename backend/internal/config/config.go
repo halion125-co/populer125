@@ -14,6 +14,11 @@ type Config struct {
 	FCMCredentialsPath string
 	AdminEmail         string
 	AdminPassword      string
+	SMTPHost           string
+	SMTPPort           string
+	SMTPUser           string
+	SMTPPassword       string
+	SMTPFrom           string
 }
 
 func Load() *Config {
@@ -32,6 +37,11 @@ func Load() *Config {
 		FCMCredentialsPath: getEnv("FCM_CREDENTIALS_PATH", ""),
 		AdminEmail:         getEnv("ADMIN_EMAIL", "halion125@gmail.com"),
 		AdminPassword:      os.Getenv("ADMIN_PASSWORD"),
+		SMTPHost:           getEnv("SMTP_HOST", "smtp.gmail.com"),
+		SMTPPort:           getEnv("SMTP_PORT", "587"),
+		SMTPUser:           os.Getenv("SMTP_USER"),
+		SMTPPassword:       os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:           getEnv("SMTP_FROM", os.Getenv("SMTP_USER")),
 	}
 }
 

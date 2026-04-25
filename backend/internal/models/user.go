@@ -41,4 +41,5 @@ type UserProfile struct {
 	CustomsNumber   string `json:"customsNumber"`
 	CreatedAt       string `json:"createdAt"`
 	IsAdmin         bool   `json:"isAdmin"`
+	IsTempPassword  bool   `json:"isTempPassword"`
 }

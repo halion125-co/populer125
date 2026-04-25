@@ -1,5 +1,5 @@
 import { useState, useContext, useEffect, useCallback } from 'react';
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import { AuthContext } from '../contexts/AuthContext';
 import { apiClient } from '../lib/api';
 
@@ -35,7 +35,10 @@ interface DaumAddressData {
 const ProfilePage = () => {
   const auth = useContext(AuthContext);
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<Tab>('basic');
+  const search = useSearch({ from: '/profile' }) as { tab?: string };
+  const [activeTab, setActiveTab] = useState<Tab>(
+    search.tab === 'security' ? 'security' : 'basic'
+  );
 
   const [basicForm, setBasicForm] = useState({
     email: auth?.user?.email || '',
@@ -280,6 +283,7 @@ const ProfilePage = () => {
       });
       setPwForm({ currentPassword: '', newPassword: '', newPasswordConfirm: '' });
       showMsg('success', '비밀번호가 변경되었습니다.');
+      await auth?.refreshUser();
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { message?: string } } };
       showMsg('error', axiosErr.response?.data?.message || '비밀번호 변경에 실패했습니다.');
@@ -662,6 +666,11 @@ const ProfilePage = () => {
             {/* 보안 탭 */}
             {activeTab === 'security' && (
               <div className="space-y-6 max-w-md">
+                {auth?.user?.isTempPassword && (
+                  <div className="p-4 bg-amber-50 border border-amber-300 rounded-md text-amber-800 text-sm">
+                    임시 비밀번호로 로그인되었습니다. 지금 바로 새 비밀번호로 변경해주세요.
+                  </div>
+                )}
                 <div className="space-y-4">
                   <h3 className="font-medium text-gray-800">비밀번호 변경</h3>
                   <div>

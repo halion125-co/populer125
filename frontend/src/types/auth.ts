@@ -30,6 +30,7 @@ export interface UserProfile {
   customsNumber: string;
   createdAt: string;
   isAdmin?: boolean;
+  isTempPassword?: boolean;
 }
 
 export interface LoginResponse {

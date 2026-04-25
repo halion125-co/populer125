@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/rocketgrowth/backend/internal/auth"
 	"github.com/rocketgrowth/backend/internal/config"
 	"github.com/rocketgrowth/backend/internal/database"
+	"github.com/rocketgrowth/backend/internal/email"
 	"github.com/rocketgrowth/backend/internal/models"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -29,11 +32,11 @@ func Login(cfg *config.Config) echo.HandlerFunc {
 
 		// Find user by email
 		var user models.User
-		var isAdmin int
+		var isAdmin, isTempPassword int
 		err := database.DB.QueryRow(
-			"SELECT id, email, password, phone, vendor_id, access_key, secret_key, created_at, is_admin FROM users WHERE email = ?",
+			"SELECT id, email, password, phone, vendor_id, access_key, secret_key, created_at, is_admin, is_temp_password FROM users WHERE email = ?",
 			req.Email,
-		).Scan(&user.ID, &user.Email, &user.Password, &user.Phone, &user.VendorID, &user.AccessKey, &user.SecretKey, &user.CreatedAt, &isAdmin)
+		).Scan(&user.ID, &user.Email, &user.Password, &user.Phone, &user.VendorID, &user.AccessKey, &user.SecretKey, &user.CreatedAt, &isAdmin, &isTempPassword)
 		if err == sql.ErrNoRows {
 			return echo.NewHTTPError(http.StatusUnauthorized, "이메일 또는 비밀번호가 올바르지 않습니다")
 		}
@@ -57,13 +60,14 @@ func Login(cfg *config.Config) echo.HandlerFunc {
 			Token:     token,
 			ExpiresAt: expiresAt,
 			User: models.UserProfile{
-				ID:        user.ID,
-				Email:     user.Email,
-				Phone:     user.Phone,
-				VendorID:  user.VendorID,
-				HasSecret: user.SecretKey != "",
-				CreatedAt: user.CreatedAt,
-				IsAdmin:   isAdmin == 1,
+				ID:             user.ID,
+				Email:          user.Email,
+				Phone:          user.Phone,
+				VendorID:       user.VendorID,
+				HasSecret:      user.SecretKey != "",
+				CreatedAt:      user.CreatedAt,
+				IsAdmin:        isAdmin == 1,
+				IsTempPassword: isTempPassword == 1,
 			},
 		})
 	}
@@ -130,3 +134,67 @@ func Register(cfg *config.Config) echo.HandlerFunc {
 		})
 	}
 }
+
+// ForgotPassword issues a temporary password and sends it by email.
+func ForgotPassword(cfg *config.Config) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		var req struct {
+			Email string `json:"email"`
+		}
+		if err := c.Bind(&req); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+		}
+		req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+		if req.Email == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "이메일을 입력해주세요")
+		}
+
+		// Always return the same response to avoid leaking whether email exists
+		successResp := map[string]string{"message": "임시 비밀번호를 이메일로 발송했습니다"}
+
+		var userID int64
+		err := database.DB.QueryRow("SELECT id FROM users WHERE email = ?", req.Email).Scan(&userID)
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusOK, successResp)
+		}
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "서버 오류가 발생했습니다")
+		}
+
+		// Generate 10-char temporary password (letters + digits)
+		tempPw, err := generateTempPassword(10)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "서버 오류가 발생했습니다")
+		}
+
+		hashed, err := bcrypt.GenerateFromPassword([]byte(tempPw), bcrypt.DefaultCost)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "서버 오류가 발생했습니다")
+		}
+
+		if _, err := database.DB.Exec(
+			"UPDATE users SET password = ?, is_temp_password = 1 WHERE id = ?",
+			string(hashed), userID,
+		); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "서버 오류가 발생했습니다")
+		}
+
+		email.SendPasswordResetEmail(cfg, req.Email, tempPw)
+
+		return c.JSON(http.StatusOK, successResp)
+	}
+}
+
+func generateTempPassword(length int) (string, error) {
+	const charset = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	result := make([]byte, length)
+	for i := range result {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", err
+		}
+		result[i] = charset[n.Int64()]
+	}
+	return string(result), nil
+}
+

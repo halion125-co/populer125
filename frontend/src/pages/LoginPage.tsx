@@ -36,7 +36,12 @@ const LoginPage = () => {
 
     try {
       await auth!.login(form);
-      navigate({ to: '/' });
+      const user = auth!.user ?? JSON.parse(localStorage.getItem('user') || '{}');
+      if (user?.isTempPassword) {
+        navigate({ to: '/profile', search: { tab: 'security' } });
+      } else {
+        navigate({ to: '/' });
+      }
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { message?: string } } };
       setError(axiosErr.response?.data?.message || '이메일 또는 비밀번호가 올바르지 않습니다.');
@@ -94,6 +99,16 @@ const LoginPage = () => {
                 )}
               </button>
             </div>
+          </div>
+
+          <div className="text-right">
+            <button
+              type="button"
+              onClick={() => navigate({ to: '/forgot-password' })}
+              className="text-sm text-blue-600 hover:text-blue-800"
+            >
+              비밀번호를 잊으셨나요?
+            </button>
           </div>
 
           <div className="flex items-center gap-2">

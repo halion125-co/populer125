@@ -340,40 +340,40 @@ func getInventoryFromDB(c echo.Context) error {
 	database.DB.QueryRow("SELECT COUNT(*) FROM inventory WHERE user_id = ? AND stock_quantity > 0", user.UserID).Scan(&totalInStock)
 	totalOutOfStock = totalAll - totalInStock
 
-	// 필터 조건 조립
-	where := "WHERE user_id = ?"
+	// 필터 조건 조립 (테이블 별칭 i. 사용)
+	where := "WHERE i.user_id = ?"
 	args := []interface{}{user.UserID}
 
 	if mappedOnly == "true" {
-		where += " AND is_mapped = 1"
+		where += " AND i.is_mapped = 1"
 	} else if mappedOnly == "false" {
-		where += " AND is_mapped = 0"
+		where += " AND i.is_mapped = 0"
 	}
 	if productName != "" {
-		where += " AND product_name LIKE ?"
-		args = append(args, "%"+productName+"%")
+		where += " AND (i.product_name LIKE ? OR p.seller_product_name LIKE ?)"
+		args = append(args, "%"+productName+"%", "%"+productName+"%")
 	}
 	if optionName != "" {
-		where += " AND item_name LIKE ?"
+		where += " AND i.item_name LIKE ?"
 		args = append(args, "%"+optionName+"%")
 	}
 	if stockStatus == "in_stock" {
-		where += " AND stock_quantity > 0"
+		where += " AND i.stock_quantity > 0"
 	} else if stockStatus == "out_of_stock" {
-		where += " AND stock_quantity = 0"
+		where += " AND i.stock_quantity = 0"
 	}
 
 	// 생성일자 필터 (KST → UTC 변환)
 	kst := time.FixedZone("KST", 9*60*60)
 	if createdAtFrom != "" {
 		if t, err := time.ParseInLocation("2006-01-02", createdAtFrom, kst); err == nil {
-			where += " AND COALESCE(created_at, synced_at) >= ?"
+			where += " AND COALESCE(i.created_at, i.synced_at) >= ?"
 			args = append(args, t.UTC().Format(time.RFC3339))
 		}
 	}
 	if createdAtTo != "" {
 		if t, err := time.ParseInLocation("2006-01-02", createdAtTo, kst); err == nil {
-			where += " AND COALESCE(created_at, synced_at) < ?"
+			where += " AND COALESCE(i.created_at, i.synced_at) < ?"
 			args = append(args, t.Add(24*time.Hour).UTC().Format(time.RFC3339))
 		}
 	}
@@ -381,33 +381,35 @@ func getInventoryFromDB(c echo.Context) error {
 	// alertType: 최근 7일 신규/품절 필터
 	sevenDaysAgo := time.Now().UTC().Add(-7 * 24 * time.Hour).Format("2006-01-02 15:04:05")
 	if alertType == "new" {
-		where += " AND COALESCE(created_at, synced_at) >= ?"
+		where += " AND COALESCE(i.created_at, i.synced_at) >= ?"
 		args = append(args, sevenDaysAgo)
 	} else if alertType == "out_of_stock" {
-		where += " AND out_of_stock_at IS NOT NULL AND out_of_stock_at >= ?"
+		where += " AND i.out_of_stock_at IS NOT NULL AND i.out_of_stock_at >= ?"
 		args = append(args, sevenDaysAgo)
 	} else if alertType == "recent" {
-		// 신규 OR 품절 (둘 중 하나라도 해당)
-		where += " AND (COALESCE(created_at, synced_at) >= ? OR (out_of_stock_at IS NOT NULL AND out_of_stock_at >= ?))"
+		where += " AND (COALESCE(i.created_at, i.synced_at) >= ? OR (i.out_of_stock_at IS NOT NULL AND i.out_of_stock_at >= ?))"
 		args = append(args, sevenDaysAgo, sevenDaysAgo)
 	}
 
 	// 필터 적용 건수
 	var filteredCount int
-	database.DB.QueryRow("SELECT COUNT(*) FROM inventory "+where, args...).Scan(&filteredCount)
+	database.DB.QueryRow(`SELECT COUNT(*) FROM inventory i LEFT JOIN products p ON p.user_id = i.user_id AND p.seller_product_id = i.seller_product_id `+where, args...).Scan(&filteredCount)
 
 	// 데이터 조회
 	queryArgs := append(args, alertType, alertType, pageSize, (page-1)*pageSize)
 	rows, err := database.DB.Query(`
-		SELECT vendor_item_id, product_name, item_name, status_name,
-		       stock_quantity, sales_last_30_days, is_mapped, synced_at,
-		       COALESCE(created_at, synced_at), COALESCE(out_of_stock_at, '')
-		FROM inventory
+		SELECT i.vendor_item_id,
+		       COALESCE(NULLIF(i.product_name,''), p.seller_product_name, '') AS product_name,
+		       i.item_name, i.status_name,
+		       i.stock_quantity, i.sales_last_30_days, i.is_mapped, i.synced_at,
+		       COALESCE(i.created_at, i.synced_at), COALESCE(i.out_of_stock_at, '')
+		FROM inventory i
+		LEFT JOIN products p ON p.user_id = i.user_id AND p.seller_product_id = i.seller_product_id
 		`+where+`
-		ORDER BY CASE WHEN ? = 'new' THEN COALESCE(created_at, synced_at)
-		              WHEN ? = 'out_of_stock' THEN out_of_stock_at
+		ORDER BY CASE WHEN ? = 'new' THEN COALESCE(i.created_at, i.synced_at)
+		              WHEN ? = 'out_of_stock' THEN i.out_of_stock_at
 		              ELSE NULL END DESC NULLS LAST,
-		         vendor_item_id DESC
+		         i.vendor_item_id DESC
 		LIMIT ? OFFSET ?
 	`, queryArgs...)
 	if err != nil {

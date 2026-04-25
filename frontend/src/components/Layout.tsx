@@ -10,7 +10,6 @@ const NAV_ITEMS = [
   { to: '/orders',    label: '주문관리' },
   { to: '/products',  label: '상품관리' },
   { to: '/inventory', label: '재고관리' },
-  { to: '/returns',   label: '반품/정산' },
   { to: '/batch',     label: '배치관리' },
 ];
 

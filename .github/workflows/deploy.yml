@@ -17,5 +17,7 @@ jobs:
       - name: Deploy locally on NAS
         run: |
           echo "🚀 Deploying on NAS..."
-          cp /volume2/docker/populer125/.env.prod .env.prod
-          docker-compose -f docker-compose.prod.yml up -d --build
+          echo "Runner workspace: $GITHUB_WORKSPACE"
+          echo "Current dir: $(pwd)"
+          find / -name ".env.prod" 2>/dev/null | head -20
+          find / -name "docker-compose.prod.yml" 2>/dev/null | head -20

@@ -1,59 +1,24 @@
-name: Deploy Backend to NAS
+name: Deploy to NAS
 
 on:
   push:
     branches:
       - main
-    paths:
-      - 'backend/**'
-      - 'docker-compose.prod.yml'
-      - '.env.prod'
-      - 'frontend/**'
   workflow_dispatch:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup SSH key
+      - name: Deploy locally on NAS
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.NAS_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H ${{ secrets.NAS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
-          ssh-keyscan -p ${{ secrets.NAS_SSH_PORT || '22' }} -H ${{ secrets.NAS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
-
-      - name: Test SSH connection
-        run: |
-          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p ${{ secrets.NAS_SSH_PORT || '22' }} -v ${{ secrets.NAS_USER }}@${{ secrets.NAS_HOST }} "echo SSH OK" 2>&1 | tail -20
-
-      - name: Deploy to NAS
-        env:
-          NAS_HOST: ${{ secrets.NAS_HOST }}
-          NAS_USER: ${{ secrets.NAS_USER }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          NAS_PORT: ${{ secrets.NAS_SSH_PORT }}
-        run: |
-          echo "🚀 Deploying to NAS..."
-          SSH="ssh -i /home/runner/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p ${NAS_PORT}"
-
-          # git pull로 소스 동기화 (rsync 대신)
-          $SSH ${NAS_USER}@${NAS_HOST} "
-            cd ${DEPLOY_PATH}
-            git pull origin main
-            /usr/local/bin/docker-compose -f docker-compose.prod.yml down
-            /usr/local/bin/docker-compose -f docker-compose.prod.yml build --no-cache
-            /usr/local/bin/docker-compose -f docker-compose.prod.yml up -d
-            /usr/local/bin/docker-compose -f docker-compose.prod.yml ps
-          "
-
-      - name: Health Check
-        run: |
-          echo "⏳ Waiting for services to start..."
-          sleep 10
-          echo "🔍 Checking backend health..."
-          curl -f --max-time 10 https://api.halion125.synology.me/api/health && echo "✅ Deployment successful!" || echo "⚠️ Health check skipped (port may be firewalled)"
+          echo "🚀 Deploying on NAS..."
+          cd /volume2/docker/populer125
+          git fetch origin
+          git reset --hard origin/main
+          git clean -fd -e .env
+          docker-compose -f docker-compose.prod.yml up -d --build

@@ -17,4 +17,5 @@ jobs:
       - name: Deploy locally on NAS
         run: |
           echo "🚀 Deploying on NAS..."
-          docker-compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+          cp /volume2/docker/populer125/.env.prod .env.prod
+          docker-compose -f docker-compose.prod.yml up -d --build

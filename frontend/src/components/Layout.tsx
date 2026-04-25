@@ -72,7 +72,7 @@ export default function Layout({ children }: LayoutProps) {
                 {auth.user?.nameKo || auth.user?.email}
               </span>
               <button
-                onClick={() => navigate({ to: '/profile' })}
+                onClick={() => navigate({ to: '/profile' as any })}
                 className="px-3 py-1.5 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50 whitespace-nowrap"
               >
                 내 정보

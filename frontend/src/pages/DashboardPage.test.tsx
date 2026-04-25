@@ -19,6 +19,9 @@ describe('DashboardPage', () => {
     refreshUser: vi.fn(),
     isAuthenticated: true,
     isLoading: false,
+    impersonating: false,
+    startImpersonation: vi.fn(),
+    stopImpersonation: vi.fn(),
   };
 
   it('TC001: renders dashboard title', () => {

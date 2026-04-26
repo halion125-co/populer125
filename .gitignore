@@ -65,7 +65,6 @@ mobile/ios/
 mobile/dist/
 mobile/*.apk
 mobile/*.aab
-mobile/google-services.json
 mobile/GoogleService-Info.plist
 mobile/rocketgrowth-*-firebase-adminsdk-*.json
 mobile/.env

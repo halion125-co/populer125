@@ -76,20 +76,38 @@ export default function SettingsScreen() {
   };
 
   const openSystemNotificationSettings = async () => {
-    try {
-      if (Platform.OS === 'android') {
+    if (Platform.OS === 'android') {
+      try {
         await IntentLauncher.startActivityAsync(
-          'android.settings.CHANNEL_NOTIFICATION_SETTINGS',
+          IntentLauncher.ActivityAction.CHANNEL_NOTIFICATION_SETTINGS,
           {
             data: 'package:com.rocketgrowth.app',
             extra: { 'android.provider.extra.CHANNEL_ID': 'orders' },
           }
         );
-      } else {
-        await Linking.openURL('app-settings:');
+        return;
+      } catch {}
+      try {
+        await IntentLauncher.startActivityAsync(
+          IntentLauncher.ActivityAction.APP_NOTIFICATION_SETTINGS,
+          { extra: { 'android.provider.extra.APP_PACKAGE': 'com.rocketgrowth.app' } }
+        );
+        return;
+      } catch {}
+      try {
+        await IntentLauncher.startActivityAsync(
+          IntentLauncher.ActivityAction.APPLICATION_DETAILS_SETTINGS,
+          { data: 'package:com.rocketgrowth.app' }
+        );
+      } catch {
+        Alert.alert('오류', '설정 앱을 열 수 없습니다.');
       }
-    } catch {
-      Alert.alert('오류', '설정 앱을 열 수 없습니다.');
+    } else {
+      try {
+        await Linking.openURL('app-settings:');
+      } catch {
+        Alert.alert('오류', '설정 앱을 열 수 없습니다.');
+      }
     }
   };
 

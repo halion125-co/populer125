@@ -22,10 +22,6 @@
       "env": {
         "EXPO_PUBLIC_API_URL": "https://api.halion125.synology.me"
       },
-      "files": {
-        "google-services.json": "$GOOGLE_SERVICES_JSON",
-        "GoogleService-Info.plist": "$GOOGLE_SERVICES_PLIST"
-      },
       "channel": "preview"
     },
     "production": {

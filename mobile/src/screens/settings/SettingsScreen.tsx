@@ -4,6 +4,7 @@ import {
   TouchableOpacity, Alert, ActivityIndicator, Linking, Platform,
 } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import * as IntentLauncher from 'expo-intent-launcher';
 import Constants from 'expo-constants';
 import { useNavigation } from '@react-navigation/native';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -77,7 +78,13 @@ export default function SettingsScreen() {
   const openSystemNotificationSettings = async () => {
     try {
       if (Platform.OS === 'android') {
-        await Linking.openSettings();
+        await IntentLauncher.startActivityAsync(
+          'android.settings.CHANNEL_NOTIFICATION_SETTINGS',
+          {
+            data: 'package:com.rocketgrowth.app',
+            extra: { 'android.provider.extra.CHANNEL_ID': 'orders' },
+          }
+        );
       } else {
         await Linking.openURL('app-settings:');
       }

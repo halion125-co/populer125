@@ -75,39 +75,38 @@ export default function SettingsScreen() {
     else save({ ...settings, quiet_end: timeStr });
   };
 
-  const openSystemNotificationSettings = async () => {
+  const openAppNotificationSettings = async () => {
     if (Platform.OS === 'android') {
-      try {
-        await IntentLauncher.startActivityAsync(
-          IntentLauncher.ActivityAction.CHANNEL_NOTIFICATION_SETTINGS,
-          {
-            data: 'package:com.rocketgrowth.app',
-            extra: { 'android.provider.extra.CHANNEL_ID': 'orders' },
-          }
-        );
-        return;
-      } catch {}
       try {
         await IntentLauncher.startActivityAsync(
           IntentLauncher.ActivityAction.APP_NOTIFICATION_SETTINGS,
           { extra: { 'android.provider.extra.APP_PACKAGE': 'com.rocketgrowth.app' } }
         );
-        return;
-      } catch {}
+      } catch {
+        Alert.alert('오류', '설정 앱을 열 수 없습니다.');
+      }
+    } else {
+      try { await Linking.openURL('app-settings:'); } catch {}
+    }
+  };
+
+  const openChannelNotificationSettings = async () => {
+    if (Platform.OS === 'android') {
       try {
         await IntentLauncher.startActivityAsync(
-          IntentLauncher.ActivityAction.APPLICATION_DETAILS_SETTINGS,
-          { data: 'package:com.rocketgrowth.app' }
+          IntentLauncher.ActivityAction.CHANNEL_NOTIFICATION_SETTINGS,
+          {
+            extra: {
+              'android.provider.extra.APP_PACKAGE': 'com.rocketgrowth.app',
+              'android.provider.extra.CHANNEL_ID': 'orders',
+            },
+          }
         );
       } catch {
         Alert.alert('오류', '설정 앱을 열 수 없습니다.');
       }
     } else {
-      try {
-        await Linking.openURL('app-settings:');
-      } catch {
-        Alert.alert('오류', '설정 앱을 열 수 없습니다.');
-      }
+      try { await Linking.openURL('app-settings:'); } catch {}
     }
   };
 
@@ -184,8 +183,19 @@ export default function SettingsScreen() {
 
       <Text style={styles.sectionTitle}>시스템</Text>
       <View style={styles.card}>
-        <TouchableOpacity style={styles.row} onPress={openSystemNotificationSettings}>
-          <Text style={styles.label}>시스템 알림 설정으로 이동</Text>
+        <TouchableOpacity style={styles.row} onPress={openAppNotificationSettings}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>알림 허용 설정</Text>
+            <Text style={styles.desc}>앱 알림 켜기/끄기</Text>
+          </View>
+          <Text style={styles.arrow}>›</Text>
+        </TouchableOpacity>
+        <View style={styles.divider} />
+        <TouchableOpacity style={styles.row} onPress={openChannelNotificationSettings}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>알림 소리 · 진동 설정</Text>
+            <Text style={styles.desc}>주문 알림 소리, 진동 방식 변경</Text>
+          </View>
           <Text style={styles.arrow}>›</Text>
         </TouchableOpacity>
       </View>

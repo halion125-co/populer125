@@ -20,10 +20,13 @@ func Init(dbPath string) error {
 		return fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL&cache=shared")
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
+
+	// SQLite는 단일 writer만 허용 — 커넥션 1개로 제한해 SQLITE_BUSY 방지
+	db.SetMaxOpenConns(1)
 
 	if err := db.Ping(); err != nil {
 		return fmt.Errorf("failed to connect to database: %w", err)

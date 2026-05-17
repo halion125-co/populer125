@@ -17,7 +17,6 @@ import (
 	"github.com/rocketgrowth/backend/internal/coupang"
 	"github.com/rocketgrowth/backend/internal/database"
 	"github.com/rocketgrowth/backend/internal/fcm"
-	"github.com/rocketgrowth/backend/internal/forecast"
 	"github.com/rocketgrowth/backend/internal/handlers"
 	"github.com/rocketgrowth/backend/internal/middleware"
 )
@@ -129,26 +128,11 @@ func main() {
 	adminGroup.POST("/impersonate/:id", handlers.ImpersonateUser(cfg))
 	api.GET("/admin/fcm-monitor", handlers.GetFCMMonitor(cfg))
 
-	// 주문 예측
-	api.GET("/forecast", handlers.GetForecast)
-	api.GET("/forecast/config", handlers.GetForecastConfigs)
-	api.GET("/forecast/:vendorItemId", handlers.GetForecastDetail)
-	api.POST("/forecast/config", handlers.SaveForecastConfig)
-	api.POST("/forecast/run", handlers.RunForecast)
-
-	// 입고 예정 관리
-	api.GET("/inbound-plan", handlers.GetInboundPlans)
-	api.POST("/inbound-plan", handlers.CreateInboundPlan)
-	api.PUT("/inbound-plan/:id", handlers.UpdateInboundPlan)
-	api.DELETE("/inbound-plan/:id", handlers.DeleteInboundPlan)
-
 	// 스케줄러 시작 (매일 KST 00:00)
 	go startScheduler(e)
 	go startOrderPolling(e)
 	// 재고 1시간마다 자동 동기화
 	go startInventoryHourlyScheduler(e)
-	// 주문 예측 배치 (매일 KST 02:00)
-	go startForecastScheduler(e)
 
 	port := fmt.Sprintf(":%s", cfg.ServerPort)
 	e.Logger.Fatal(e.Start(port))
@@ -2638,42 +2622,6 @@ func startInventoryHourlyScheduler(e *echo.Echo) {
 		rows.Close()
 		for _, u := range users {
 			go executeBatchJob(u.id, u.vendorID, u.accessKey, u.secretKey, "inventory", "scheduler")
-		}
-	}
-}
-
-// startForecastScheduler: 매일 KST 02:00에 모든 유저의 예측 스냅샷 생성
-func startForecastScheduler(e *echo.Echo) {
-	loc, _ := time.LoadLocation("Asia/Seoul")
-	for {
-		now := time.Now().In(loc)
-		next := time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, loc)
-		if !next.After(now) {
-			next = next.AddDate(0, 0, 1)
-		}
-		time.Sleep(time.Until(next))
-
-		rows, err := database.DB.Query(`SELECT id FROM users WHERE vendor_id != '' AND access_key != ''`)
-		if err != nil {
-			e.Logger.Errorf("[forecast scheduler] 유저 조회 실패: %v", err)
-			continue
-		}
-		var userIDs []int64
-		for rows.Next() {
-			var id int64
-			rows.Scan(&id)
-			userIDs = append(userIDs, id)
-		}
-		rows.Close()
-
-		today := time.Now().In(loc)
-		for _, uid := range userIDs {
-			count, err := forecast.RunForUser(uid, today)
-			if err != nil {
-				e.Logger.Errorf("[forecast scheduler] user=%d 실패: %v", uid, err)
-			} else {
-				e.Logger.Infof("[forecast scheduler] user=%d 스냅샷 %d건 생성", uid, count)
-			}
 		}
 	}
 }

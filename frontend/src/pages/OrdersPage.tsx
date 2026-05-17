@@ -293,7 +293,7 @@ const OrdersPage = () => {
           const dateLabel = searchRange.from?.slice(0, 10) ?? '';
           const timeLabel = `${dateLabel} ${String(h).padStart(2, '0')}:${i % 2 === 0 ? '00' : '30'}`;
           return {
-            label: i % 2 === 0 ? `${String(h).padStart(2, '0')}시` : '',
+            label: `${String(h).padStart(2, '0')}${i % 2 === 0 ? ':00' : ':30'}`,
             sub: '',
             sales: slots[i].sales,
             count: slots[i].count,
@@ -635,8 +635,8 @@ const OrdersPage = () => {
                       const step = chartData.length > 20 ? 10 : chartData.length > 10 ? 5 : 1;
                       if (index % step !== 0) return <g />;
                     } else {
-                      // 시간/30분 단위: 3시간(=6슬롯) 간격, label 없는 슬롯 제외
-                      if (!payload.value) return <g />;
+                      // 시간/30분 단위: 30분 슬롯 제외, 3시간 간격만 표시
+                      if (!payload.value || !payload.value.endsWith(':00')) return <g />;
                       const labelHour = parseInt(payload.value, 10);
                       if (labelHour % 3 !== 0) return <g />;
                     }

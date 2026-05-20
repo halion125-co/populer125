@@ -2512,15 +2512,17 @@ func startOrderPolling(e *echo.Echo) {
 				if paidTime.Format("2006-01-02") != todayDate {
 					continue
 				}
-				paidKST := paidTime.Format("01/02 15:04")
 				for _, oi := range o.OrderItems {
 					var price float64
 					fmt.Sscanf(oi.UnitSalesPrice, "%f", &price)
-					lines = append(lines, fmt.Sprintf("• [%s] %s / %d개 / %s원",
-						paidKST,
-						oi.ProductName,
+					name := oi.ProductName
+					if len([]rune(name)) > 20 {
+						name = string([]rune(name)[:20]) + "…"
+					}
+					lines = append(lines, fmt.Sprintf("• %s / %d개 / %s원",
+						name,
 						oi.SalesQuantity,
-						formatComma(int64(price))))
+						formatComma(int64(price*float64(oi.SalesQuantity)))))
 				}
 			}
 
@@ -2560,12 +2562,9 @@ func startOrderPolling(e *echo.Echo) {
 
 			// 7. FCM 푸시 발송 (신규 주문 있을 때만, 슬랙 무관)
 			if len(lines) > 0 {
-				pushTitle := fmt.Sprintf("판매현황 총%d개/총 %s원", todayTotalQty, formatComma(int64(todayTotalAmt)))
+				pushTitle := fmt.Sprintf("판매현황 총%d개 / 총%s원", todayTotalQty, formatComma(int64(todayTotalAmt)))
 				go func(uid int64, title string, qty int, amt float64, ls []string) {
 					body := strings.Join(ls, "\n")
-					if len(body) > 100 {
-						body = body[:100] + "..."
-					}
 					if err := fcm.SendToUser(database.DB, uid, title, map[string]string{
 						"total_qty":    fmt.Sprintf("%d", qty),
 						"total_amount": fmt.Sprintf("%.0f", amt),

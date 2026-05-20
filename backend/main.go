@@ -2515,12 +2515,8 @@ func startOrderPolling(e *echo.Echo) {
 				for _, oi := range o.OrderItems {
 					var price float64
 					fmt.Sscanf(oi.UnitSalesPrice, "%f", &price)
-					name := oi.ProductName
-					if len([]rune(name)) > 20 {
-						name = string([]rune(name)[:20]) + "…"
-					}
 					lines = append(lines, fmt.Sprintf("• %s / %d개 / %s원",
-						name,
+						oi.ProductName,
 						oi.SalesQuantity,
 						formatComma(int64(price*float64(oi.SalesQuantity)))))
 				}

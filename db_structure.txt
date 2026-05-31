@@ -1,0 +1,231 @@
+=== TABLES ===
+batch_jobs|0
+batch_logs|9693
+device_tokens|3
+inventory|145
+notification_settings|1
+order_items|2252
+order_sync_ranges|0
+orders|2171
+product_items|75
+products|28
+push_notification_history|289
+returns|0
+revenue_history|0
+revenue_history_items|0
+slack_webhooks|2
+sqlite_sequence|12
+sync_status|6
+users|3
+
+=== COLUMNS ===
+batch_jobs|id|INTEGER|pk=1|notnull=0|default=None
+batch_jobs|user_id|INTEGER|pk=0|notnull=1|default=None
+batch_jobs|job_type|TEXT|pk=0|notnull=1|default=None
+batch_jobs|job_name|TEXT|pk=0|notnull=1|default=None
+batch_jobs|is_active|INTEGER|pk=0|notnull=0|default=1
+batch_jobs|cron_expr|TEXT|pk=0|notnull=0|default='0 0 * * *'
+batch_jobs|created_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+batch_logs|id|INTEGER|pk=1|notnull=0|default=None
+batch_logs|user_id|INTEGER|pk=0|notnull=1|default=None
+batch_logs|job_type|TEXT|pk=0|notnull=1|default=None
+batch_logs|triggered_by|TEXT|pk=0|notnull=0|default='scheduler'
+batch_logs|status|TEXT|pk=0|notnull=0|default='running'
+batch_logs|message|TEXT|pk=0|notnull=0|default=''
+batch_logs|record_count|INTEGER|pk=0|notnull=0|default=0
+batch_logs|started_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+batch_logs|finished_at|DATETIME|pk=0|notnull=0|default=None
+batch_logs|from_date|TEXT|pk=0|notnull=0|default=''
+batch_logs|to_date|TEXT|pk=0|notnull=0|default=''
+device_tokens|id|INTEGER|pk=1|notnull=0|default=None
+device_tokens|user_id|INTEGER|pk=0|notnull=1|default=None
+device_tokens|fcm_token|TEXT|pk=0|notnull=1|default=None
+device_tokens|platform|TEXT|pk=0|notnull=0|default='unknown'
+device_tokens|device_name|TEXT|pk=0|notnull=0|default=''
+device_tokens|created_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+device_tokens|updated_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+inventory|id|INTEGER|pk=1|notnull=0|default=None
+inventory|user_id|INTEGER|pk=0|notnull=1|default=None
+inventory|vendor_item_id|INTEGER|pk=0|notnull=1|default=None
+inventory|product_name|TEXT|pk=0|notnull=0|default=''
+inventory|item_name|TEXT|pk=0|notnull=0|default=''
+inventory|status_name|TEXT|pk=0|notnull=0|default=''
+inventory|stock_quantity|INTEGER|pk=0|notnull=0|default=0
+inventory|sales_last_30_days|INTEGER|pk=0|notnull=0|default=0
+inventory|is_mapped|INTEGER|pk=0|notnull=0|default=0
+inventory|synced_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+inventory|seller_product_id|INTEGER|pk=0|notnull=0|default=0
+inventory|created_at|DATETIME|pk=0|notnull=0|default=NULL
+inventory|out_of_stock_at|DATETIME|pk=0|notnull=0|default=NULL
+notification_settings|id|INTEGER|pk=1|notnull=0|default=None
+notification_settings|user_id|INTEGER|pk=0|notnull=1|default=None
+notification_settings|push_enabled|INTEGER|pk=0|notnull=1|default=1
+notification_settings|quiet_start|TEXT|pk=0|notnull=0|default=''
+notification_settings|quiet_end|TEXT|pk=0|notnull=0|default=''
+notification_settings|updated_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+order_items|id|INTEGER|pk=1|notnull=0|default=None
+order_items|user_id|INTEGER|pk=0|notnull=1|default=None
+order_items|order_id|INTEGER|pk=0|notnull=1|default=None
+order_items|vendor_item_id|INTEGER|pk=0|notnull=0|default=0
+order_items|product_name|TEXT|pk=0|notnull=0|default=''
+order_items|sales_quantity|INTEGER|pk=0|notnull=0|default=0
+order_items|unit_price|REAL|pk=0|notnull=0|default=0
+order_items|sales_price|REAL|pk=0|notnull=0|default=0
+order_sync_ranges|id|INTEGER|pk=1|notnull=0|default=None
+order_sync_ranges|user_id|INTEGER|pk=0|notnull=1|default=None
+order_sync_ranges|from_date|TEXT|pk=0|notnull=1|default=None
+order_sync_ranges|to_date|TEXT|pk=0|notnull=1|default=None
+order_sync_ranges|synced_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+orders|id|INTEGER|pk=1|notnull=0|default=None
+orders|user_id|INTEGER|pk=0|notnull=1|default=None
+orders|order_id|INTEGER|pk=0|notnull=1|default=None
+orders|paid_at|TEXT|pk=0|notnull=0|default=''
+orders|synced_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+product_items|id|INTEGER|pk=1|notnull=0|default=None
+product_items|user_id|INTEGER|pk=0|notnull=1|default=None
+product_items|seller_product_id|INTEGER|pk=0|notnull=1|default=None
+product_items|item_id|INTEGER|pk=0|notnull=1|default=None
+product_items|item_name|TEXT|pk=0|notnull=0|default=''
+product_items|seller_product_item_name|TEXT|pk=0|notnull=0|default=''
+product_items|external_vendor_sku|TEXT|pk=0|notnull=0|default=''
+product_items|original_price|REAL|pk=0|notnull=0|default=0
+product_items|sale_price|REAL|pk=0|notnull=0|default=0
+product_items|status_name|TEXT|pk=0|notnull=0|default=''
+product_items|vendor_item_id|INTEGER|pk=0|notnull=0|default=0
+product_items|synced_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+products|id|INTEGER|pk=1|notnull=0|default=None
+products|user_id|INTEGER|pk=0|notnull=1|default=None
+products|seller_product_id|INTEGER|pk=0|notnull=1|default=None
+products|seller_product_name|TEXT|pk=0|notnull=0|default=''
+products|brand|TEXT|pk=0|notnull=0|default=''
+products|status_name|TEXT|pk=0|notnull=0|default=''
+products|sale_started_at|TEXT|pk=0|notnull=0|default=''
+products|sale_ended_at|TEXT|pk=0|notnull=0|default=''
+products|display_category_code|INTEGER|pk=0|notnull=0|default=0
+products|category_id|INTEGER|pk=0|notnull=0|default=0
+products|registration_type|TEXT|pk=0|notnull=0|default=''
+products|synced_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+products|item_count|INTEGER|pk=0|notnull=0|default=0
+push_notification_history|id|INTEGER|pk=1|notnull=0|default=None
+push_notification_history|user_id|INTEGER|pk=0|notnull=1|default=None
+push_notification_history|title|TEXT|pk=0|notnull=1|default=''
+push_notification_history|total_qty|INTEGER|pk=0|notnull=0|default=0
+push_notification_history|total_amount|REAL|pk=0|notnull=0|default=0
+push_notification_history|detail_json|TEXT|pk=0|notnull=0|default='[]'
+push_notification_history|sent_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+returns|id|INTEGER|pk=1|notnull=0|default=None
+returns|user_id|INTEGER|pk=0|notnull=1|default=None
+returns|receipt_id|INTEGER|pk=0|notnull=1|default=None
+returns|order_id|INTEGER|pk=0|notnull=0|default=0
+returns|status|TEXT|pk=0|notnull=0|default=''
+returns|status_name|TEXT|pk=0|notnull=0|default=''
+returns|product_name|TEXT|pk=0|notnull=0|default=''
+returns|vendor_item_id|INTEGER|pk=0|notnull=0|default=0
+returns|return_count|INTEGER|pk=0|notnull=0|default=0
+returns|sales_quantity|INTEGER|pk=0|notnull=0|default=0
+returns|return_reason|TEXT|pk=0|notnull=0|default=''
+returns|return_reason_code|TEXT|pk=0|notnull=0|default=''
+returns|created_at_api|TEXT|pk=0|notnull=0|default=''
+returns|cancelled_at|TEXT|pk=0|notnull=0|default=''
+returns|returned_at|TEXT|pk=0|notnull=0|default=''
+returns|raw_json|TEXT|pk=0|notnull=0|default=''
+returns|synced_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+returns|item_name|TEXT|pk=0|notnull=0|default=''
+revenue_history|id|INTEGER|pk=1|notnull=0|default=None
+revenue_history|user_id|INTEGER|pk=0|notnull=1|default=None
+revenue_history|order_id|INTEGER|pk=0|notnull=1|default=None
+revenue_history|sale_type|TEXT|pk=0|notnull=0|default=''
+revenue_history|sale_date|TEXT|pk=0|notnull=0|default=''
+revenue_history|recognition_date|TEXT|pk=0|notnull=0|default=''
+revenue_history|settlement_date|TEXT|pk=0|notnull=0|default=''
+revenue_history|final_settlement_date|TEXT|pk=0|notnull=0|default=''
+revenue_history|delivery_fee_amount|REAL|pk=0|notnull=0|default=0
+revenue_history|delivery_settlement_amount|REAL|pk=0|notnull=0|default=0
+revenue_history|raw_json|TEXT|pk=0|notnull=0|default=''
+revenue_history|synced_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+revenue_history_items|id|INTEGER|pk=1|notnull=0|default=None
+revenue_history_items|user_id|INTEGER|pk=0|notnull=1|default=None
+revenue_history_items|order_id|INTEGER|pk=0|notnull=1|default=None
+revenue_history_items|sale_type|TEXT|pk=0|notnull=0|default=''
+revenue_history_items|recognition_date|TEXT|pk=0|notnull=0|default=''
+revenue_history_items|vendor_item_id|INTEGER|pk=0|notnull=0|default=0
+revenue_history_items|product_name|TEXT|pk=0|notnull=0|default=''
+revenue_history_items|vendor_item_name|TEXT|pk=0|notnull=0|default=''
+revenue_history_items|sale_price|REAL|pk=0|notnull=0|default=0
+revenue_history_items|quantity|INTEGER|pk=0|notnull=0|default=0
+revenue_history_items|sale_amount|REAL|pk=0|notnull=0|default=0
+revenue_history_items|service_fee|REAL|pk=0|notnull=0|default=0
+revenue_history_items|service_fee_ratio|REAL|pk=0|notnull=0|default=0
+revenue_history_items|settlement_amount|REAL|pk=0|notnull=0|default=0
+revenue_history_items|external_seller_sku_code|TEXT|pk=0|notnull=0|default=''
+slack_webhooks|id|INTEGER|pk=1|notnull=0|default=None
+slack_webhooks|user_id|INTEGER|pk=0|notnull=1|default=None
+slack_webhooks|name|TEXT|pk=0|notnull=1|default=''
+slack_webhooks|webhook_url|TEXT|pk=0|notnull=1|default=None
+slack_webhooks|enabled|INTEGER|pk=0|notnull=1|default=1
+slack_webhooks|created_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+sqlite_sequence|name||pk=0|notnull=0|default=None
+sqlite_sequence|seq||pk=0|notnull=0|default=None
+sync_status|id|INTEGER|pk=1|notnull=0|default=None
+sync_status|user_id|INTEGER|pk=0|notnull=1|default=None
+sync_status|data_type|TEXT|pk=0|notnull=1|default=None
+sync_status|last_synced_at|DATETIME|pk=0|notnull=0|default=None
+sync_status|record_count|INTEGER|pk=0|notnull=0|default=0
+users|id|INTEGER|pk=1|notnull=0|default=None
+users|email|TEXT|pk=0|notnull=1|default=None
+users|password|TEXT|pk=0|notnull=1|default=None
+users|phone|TEXT|pk=0|notnull=0|default=''
+users|vendor_id|TEXT|pk=0|notnull=0|default=''
+users|access_key|TEXT|pk=0|notnull=0|default=''
+users|secret_key|TEXT|pk=0|notnull=0|default=''
+users|created_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+users|updated_at|DATETIME|pk=0|notnull=0|default=CURRENT_TIMESTAMP
+users|name_ko|TEXT|pk=0|notnull=0|default=''
+users|name_en|TEXT|pk=0|notnull=0|default=''
+users|zipcode|TEXT|pk=0|notnull=0|default=''
+users|address_ko|TEXT|pk=0|notnull=0|default=''
+users|address_detail_ko|TEXT|pk=0|notnull=0|default=''
+users|address_en|TEXT|pk=0|notnull=0|default=''
+users|address_detail_en|TEXT|pk=0|notnull=0|default=''
+users|customs_type|TEXT|pk=0|notnull=0|default='personal'
+users|customs_number|TEXT|pk=0|notnull=0|default=''
+users|polling_interval_min|INTEGER|pk=0|notnull=0|default=10
+users|is_admin|INTEGER|pk=0|notnull=0|default=0
+users|is_temp_password|INTEGER|pk=0|notnull=0|default=0
+
+=== SAMPLES ===
+batch_logs|{"id": 1, "user_id": 1, "job_type": "products", "triggered_by": "scheduler", "status": "success", "message": "상품 1건 동기화 완료", "record_count": 1, "started_at": "2026-04-07 15:00:00", "finished_at": "2026-04-07 15:00:00", "from_date": "", "to_date": ""}
+batch_logs|{"id": 2, "user_id": 1, "job_type": "orders", "triggered_by": "scheduler", "status": "failed", "message": "coupang API error: 400 - {\"timestamp\":1775574002095,\"status\":400,\"error\":\"Bad Re", "record_count": 0, "started_at": "2026-04-07 15:00:02", "finished_at": "2026-04-07 15:00:02", "from_date": "", "to_date": ""}
+device_tokens|{"id": 3, "user_id": 1, "fcm_token": "d-f-8vjNQjSOtmW9qu9CsB:APA91bGfhLkdQBJKKE2apz1WWUTQ4nRnykAjfCukm0Cl3ugV-3QHgqOIm", "platform": "android", "device_name": "성훈의 Z Fold7", "created_at": "2026-04-26 06:22:14", "updated_at": "2026-05-10 13:53:59"}
+device_tokens|{"id": 4, "user_id": 1, "fcm_token": "fPZ-56NoRuunKx7vQg32tN:APA91bHbZFLGVngFF8iFQHMSJ0v9GHrxUFVtO8a_SfAj2EgJ0WqtyaYS-", "platform": "android", "device_name": "수연의 S24", "created_at": "2026-04-26 11:14:38", "updated_at": "2026-05-11 05:57:43"}
+inventory|{"id": 1, "user_id": 1, "vendor_item_id": 92904877845, "product_name": "물방울 펜던트 목걸이", "item_name": "Silver L(75cm+5cm)", "status_name": "", "stock_quantity": 15, "sales_last_30_days": 2, "is_mapped": 1, "synced_at": "2026-05-14 13:17:30", "seller_product_id": 15624842020, "created_at": "2026-04-17 00:39:51", "out_of_stock_at": null}
+inventory|{"id": 2, "user_id": 1, "vendor_item_id": 92923760317, "product_name": "", "item_name": "", "status_name": "", "stock_quantity": 1, "sales_last_30_days": 0, "is_mapped": 0, "synced_at": "2026-05-14 13:17:31", "seller_product_id": 0, "created_at": "2026-04-17 00:39:51", "out_of_stock_at": null}
+notification_settings|{"id": 1, "user_id": 1, "push_enabled": 1, "quiet_start": "", "quiet_end": "", "updated_at": "2026-04-22 08:42:51"}
+order_items|{"id": 1, "user_id": 1, "order_id": 4100174723668, "vendor_item_id": 93210705979, "product_name": "플라워 헤어핀 세트 (5종) 5cm 핑크", "sales_quantity": 1, "unit_price": 8900.0, "sales_price": 8900.0}
+order_items|{"id": 2, "user_id": 1, "order_id": 4100174723750, "vendor_item_id": 93210705979, "product_name": "플라워 헤어핀 세트 (5종) 5cm 핑크", "sales_quantity": 1, "unit_price": 8900.0, "sales_price": 8900.0}
+orders|{"id": 1, "user_id": 1, "order_id": 4100174723668, "paid_at": "2026-03-01T02:27:18Z", "synced_at": "2026-03-31 13:55:59"}
+orders|{"id": 2, "user_id": 1, "order_id": 4100174723750, "paid_at": "2026-03-01T02:27:44Z", "synced_at": "2026-03-31 13:55:59"}
+product_items|{"id": 1, "user_id": 1, "seller_product_id": 16030897445, "item_id": 0, "item_name": "L(약5-8세) 6종 혼합", "seller_product_item_name": "", "external_vendor_sku": "", "original_price": 0.0, "sale_price": 0.0, "status_name": "", "vendor_item_id": 94609960657, "synced_at": "2026-02-24 01:22:09"}
+product_items|{"id": 199, "user_id": 1, "seller_product_id": 15967761379, "item_id": 27528994185, "item_name": "3종세트 FREE", "seller_product_item_name": "", "external_vendor_sku": "", "original_price": 0.0, "sale_price": 0.0, "status_name": "", "vendor_item_id": 94493631186, "synced_at": "2026-04-25 17:23:33"}
+products|{"id": 1, "user_id": 1, "seller_product_id": 16030897445, "seller_product_name": "여성 시원한 시스루 메쉬 덧신 양말 6종세트", "brand": "", "status_name": "승인완료", "sale_started_at": "2026-04-02T09:00:00", "sale_ended_at": "2099-12-31T09:00:00", "display_category_code": 69325, "category_id": 2584, "registration_type": "RFM", "synced_at": "2026-04-25 17:23:32", "item_count": 0}
+products|{"id": 2, "user_id": 1, "seller_product_id": 16025542879, "seller_product_name": "핑크 꽃술  롱스카프", "brand": "", "status_name": "승인완료", "sale_started_at": "2026-04-12T09:00:00", "sale_ended_at": "2099-12-31T09:00:00", "display_category_code": 69345, "category_id": 2631, "registration_type": "RFM", "synced_at": "2026-04-25 17:23:33", "item_count": 0}
+push_notification_history|{"id": 1, "user_id": 1, "title": "판매현황 총12개/총 124,700원", "total_qty": 12, "total_amount": 124700.0, "detail_json": "[\"• [04/20 10:42] 여아 레이스 양말 5세트 화이트5세트 6-8세 / 1개 / 9,800원\"]", "sent_at": "2026-04-20 01:45:16"}
+push_notification_history|{"id": 2, "user_id": 2, "title": "판매현황 총2개/총 33,600원", "total_qty": 2, "total_amount": 33600.0, "detail_json": "[\"• [04/20 10:38] 사계절 린넨 스카프 90cmX180cm 핑크 / 1개 / 16,800원\",\"• [04/20 10:38] 사계절 ", "sent_at": "2026-04-20 01:45:17"}
+slack_webhooks|{"id": 1, "user_id": 1, "name": "NAS운영", "webhook_url": "https://hooks.slack.com/services/T0AR6LRJP1C/B0AR5B76ZD3/aorEenQisUFjNUnzYf2JgeF", "enabled": 1, "created_at": "2026-04-08 08:55:58"}
+slack_webhooks|{"id": 2, "user_id": 2, "name": "주문관리", "webhook_url": "https://hooks.slack.com/services/T0ASFJNDJMA/B0ARWGQNH63/TYA4jZ046CN7cCzEEaq87v3", "enabled": 1, "created_at": "2026-04-12 11:16:45"}
+sqlite_sequence|{"name": "users", "seq": 3}
+sqlite_sequence|{"name": "products", "seq": 425}
+sync_status|{"id": 1, "user_id": 1, "data_type": "products", "last_synced_at": "2026-05-14T15:00:00Z", "record_count": 1}
+sync_status|{"id": 7, "user_id": 1, "data_type": "inventory", "last_synced_at": "2026-05-14T13:17:35Z", "record_count": 114}
+users|{"id": 1, "email": "populer125.co@gmail.com", "password": "$2a$10$IthLi2IIc4TIVm/24l3E6u.Pt0xnJbx12c9afw7H8//0vv4qUeYeu", "phone": "010-2803-4657", "vendor_id": "A01407257", "access_key": "1f70d2a0-7766-4374-9c33-6ed909e83df1", "secret_key": "5f5a951385e41cde0f800bde676e1a17d0cd4354", "created_at": "2026-02-18 15:29:35", "updated_at": "2026-02-19 03:41:12", "name_ko": "최수연", "name_en": "CHOISOOYEOUN", "zipcode": "10084", "address_ko": "경기 김포시 김포한강3로 290-13 (고창마을 한양수자인 리버팰리스)", "address_detail_ko": "607동 101호", "address_en": "290-13 Gimpohangang 3-ro, Gimpo-si, Gyeonggi-do, Republic of Korea", "address_detail_en": "607-101", "customs_type": "personal", "customs_number": "P812155603365", "polling_interval_min": 10, "is_admin": 0, "is_temp_password": 0}
+users|{"id": 2, "email": "kingsway1923@naver.com", "password": "$2a$10$oqFA60cUO8P2BEncUWWMvuymbGtyHwwhAQLaaleZtskBYEhHbXiue", "phone": "010-3993-6379", "vendor_id": "A01441522", "access_key": "465fee93-7606-4558-b579-d09d516d9bd5", "secret_key": "65a19741871167c24cb1519c26768892e5d3c5e0", "created_at": "2026-04-12 11:04:53", "updated_at": "2026-04-25 01:21:34", "name_ko": "최정아", "name_en": "", "zipcode": "", "address_ko": "", "address_detail_ko": "", "address_en": "", "address_detail_en": "", "customs_type": "personal", "customs_number": "", "polling_interval_min": 10, "is_admin": 0, "is_temp_password": 0}
+
+=== DATE RANGES ===
+orders|('2026-03-01T02:27:18Z', '2026-05-15T00:24:52Z', 2171)
+order_items|(2252,)
+product_items|(75, '2026-02-24 01:22:09', '2026-04-25 17:23:34')
+inventory|(145,)
+returns|ERROR:no such column: created_at
+revenue_history|ERROR:no such column: created_at
+revenue_history_items|(0,)
+batch_jobs|(0, None, None)

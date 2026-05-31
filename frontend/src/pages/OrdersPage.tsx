@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, type BarShapeProps } from 'recharts';
+import * as XLSX from 'xlsx';
 import { apiClient } from '../lib/api';
 import { formatKST } from '../lib/formatters';
 import type { Order, OrdersResponse } from '../types/order';
@@ -232,6 +233,37 @@ const OrdersPage = () => {
 
   const hasActiveFilters = filters.productNames.length > 0;
 
+  const handleExcelDownload = () => {
+    const rows: Record<string, string | number>[] = [];
+    filteredOrders.forEach((order) => {
+      const items = order.orderItems?.length > 0 ? order.orderItems : [{ productName: '-', salesQuantity: 0, salesPrice: 0, unitPrice: 0, vendorItemId: 0 }];
+      items.forEach((item) => {
+        rows.push({
+          결제일: order.paidAt ? formatKST(order.paidAt) : '',
+          주문번호: String(order.orderId),
+          상품명: item.productName,
+          옵션ID: String(item.vendorItemId),
+          수량: item.salesQuantity,
+          단가: item.unitPrice,
+          금액: item.salesPrice,
+        });
+      });
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    // 주문번호, 옵션ID 열을 텍스트 서식으로 지정 (지수 표기 방지)
+    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+    for (let R = 1; R <= range.e.r; R++) {
+      ['B', 'D'].forEach((col) => {
+        const cell = ws[`${col}${R + 1}`];
+        if (cell) { cell.t = 's'; }
+      });
+    }
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '주문목록');
+    const fileName = `주문목록_${searchRange.from}_${searchRange.to}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+  };
+
   // 판매된 상품명 목록 (드롭다운용)
   const productNameOptions = useMemo(() => {
     const set = new Set<string>();
@@ -450,6 +482,16 @@ const OrdersPage = () => {
         </div>
         <div className="flex items-center gap-3">
           {!isMobile && <span className="text-xs text-gray-400">동기화 범위: {dateInput.from} ~ {dateInput.to}</span>}
+          <button
+            onClick={handleExcelDownload}
+            disabled={filteredOrders.length === 0}
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm disabled:opacity-40 flex items-center gap-1"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+            </svg>
+            엑셀
+          </button>
           <button
             onClick={() => { setSyncMessage(null); syncMutation.mutate({ force: false }); }}
             disabled={syncMutation.isPending}

@@ -19,6 +19,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as FcmMonitorRouteImport } from './routes/fcm-monitor'
+import { Route as DataCollectRouteImport } from './routes/data-collect'
 import { Route as BatchRouteImport } from './routes/batch'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
@@ -73,6 +74,11 @@ const FcmMonitorRoute = FcmMonitorRouteImport.update({
   path: '/fcm-monitor',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DataCollectRoute = DataCollectRouteImport.update({
+  id: '/data-collect',
+  path: '/data-collect',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BatchRoute = BatchRouteImport.update({
   id: '/batch',
   path: '/batch',
@@ -93,6 +99,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/batch': typeof BatchRoute
+  '/data-collect': typeof DataCollectRoute
   '/fcm-monitor': typeof FcmMonitorRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/inventory': typeof InventoryRoute
@@ -108,6 +115,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/batch': typeof BatchRoute
+  '/data-collect': typeof DataCollectRoute
   '/fcm-monitor': typeof FcmMonitorRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/inventory': typeof InventoryRoute
@@ -124,6 +132,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/batch': typeof BatchRoute
+  '/data-collect': typeof DataCollectRoute
   '/fcm-monitor': typeof FcmMonitorRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/inventory': typeof InventoryRoute
@@ -141,6 +150,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/batch'
+    | '/data-collect'
     | '/fcm-monitor'
     | '/forgot-password'
     | '/inventory'
@@ -156,6 +166,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/batch'
+    | '/data-collect'
     | '/fcm-monitor'
     | '/forgot-password'
     | '/inventory'
@@ -171,6 +182,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/batch'
+    | '/data-collect'
     | '/fcm-monitor'
     | '/forgot-password'
     | '/inventory'
@@ -187,6 +199,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
   BatchRoute: typeof BatchRoute
+  DataCollectRoute: typeof DataCollectRoute
   FcmMonitorRoute: typeof FcmMonitorRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   InventoryRoute: typeof InventoryRoute
@@ -271,6 +284,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FcmMonitorRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/data-collect': {
+      id: '/data-collect'
+      path: '/data-collect'
+      fullPath: '/data-collect'
+      preLoaderRoute: typeof DataCollectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/batch': {
       id: '/batch'
       path: '/batch'
@@ -299,6 +319,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
   BatchRoute: BatchRoute,
+  DataCollectRoute: DataCollectRoute,
   FcmMonitorRoute: FcmMonitorRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   InventoryRoute: InventoryRoute,

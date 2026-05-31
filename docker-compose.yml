@@ -24,6 +24,20 @@ services:
       - .env
     environment:
       - DATABASE_PATH=/data/rocketgrowth.db
+      - WORKER_SERVER_URL=http://worker:8100
+    depends_on:
+      - worker
+
+  worker:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile
+    ports:
+      - "8100:8100"
+    volumes:
+      - ./data:/data
+    environment:
+      - WORKER_PORT=8100
 
 volumes:
   data:

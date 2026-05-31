@@ -53,6 +53,7 @@ describe('Type Definitions', () => {
       syncedAt: '2024-01-01',
       createdAt: '2024-01-01',
       outOfStockAt: '',
+      externalVendorSku: '',
     };
 
     expect(item.vendorItemId).toBe(123);
